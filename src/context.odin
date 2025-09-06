@@ -6,23 +6,24 @@ import "core:log"
 import "window"
 import "renderer"
 
-run_game :: proc(name: string, res_width: int, res_height: int, scene: ^Scene) {
+run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Scene) {
     validate_scene(scene)
 
     name_cstr := strings.unsafe_string_to_cstring(name)
 
-    win := window.init(name_cstr)
-    defer window.cleanup(win)
+    window.init(name_cstr)
+    defer window.cleanup()
+
+    renderer.init(window.get_window_handle(), buffer_width, buffer_height)
+    defer renderer.cleanup()
 
     current_scene := scene
     current_scene->on_create()
 
-    window.should_close(win)
-
-    for !window.should_close(win) {
+    for !window.should_close() {
         free_all(context.temp_allocator)
 
-        window.poll_events(win)
+        window.poll_events()
 
         new_scene := current_scene->on_update(0.0)
         if new_scene != nil {
@@ -36,8 +37,6 @@ run_game :: proc(name: string, res_width: int, res_height: int, scene: ^Scene) {
         } else {
              current_scene->on_draw(0.0)
         }
-
-        window.swap_buffers(win)
     }
 }
 

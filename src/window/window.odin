@@ -5,12 +5,15 @@ import "core:c"
 import "core:log"
 
 import "vendor:glfw"
+import "vendor:wgpu"
+import "vendor:wgpu/glfwglue"
 
-Window :: struct {
+@(private)
+instance: struct {
    window: glfw.WindowHandle
 }
 
-init :: proc(name: cstring) -> Window {
+init :: proc(name: cstring) {
     glfw.SetErrorCallback(glfw_error_callback)
 
     if !glfw.Init() {
@@ -34,37 +37,37 @@ init :: proc(name: cstring) -> Window {
     glfw.WindowHint(glfw.FOCUSED, glfw.TRUE)
     glfw.WindowHint(glfw.AUTO_ICONIFY, glfw.FALSE)
     
-    win := glfw.CreateWindow(c.int(width), c.int(height), "name", nil, nil)
-    if win == nil {
+    instance.window = glfw.CreateWindow(c.int(width), c.int(height), "name", nil, nil)
+    if instance.window == nil {
         log.panic("glfw: failed to create a window")
     }
 
-    glfw.SetWindowPos(win, mx, my);
+    glfw.SetWindowPos(instance.window, mx, my);
 
-    glfw.MakeContextCurrent(win);
+    glfw.MakeContextCurrent(instance.window);
     glfw.SwapInterval(1);
-
-    return Window {
-        win
-    }
 }
 
-cleanup :: proc(s: Window) {
-    glfw.DestroyWindow(s.window)
+cleanup :: proc() {
+    glfw.DestroyWindow(instance.window)
     glfw.Terminate()
 }
 
-should_close :: proc(s: Window) -> bool {
-    return bool(glfw.WindowShouldClose(s.window))
+should_close :: proc() -> bool {
+    return bool(glfw.WindowShouldClose(instance.window))
 }
 
-poll_events :: proc(s: Window) {
+poll_events :: proc() {
     glfw.PollEvents()
 }
 
-swap_buffers :: proc(s: Window) {
-    glfw.SwapBuffers(s.window);
+get_window_handle :: proc() -> glfw.WindowHandle {
+    return instance.window
 }
+
+// swap_buffers :: proc(s: Window) {
+//     glfw.SwapBuffers(s.window);
+// }
 
 @(private)
 glfw_error_callback :: proc "c" (code: i32, description: cstring) {
