@@ -16,6 +16,8 @@ my_scene_create :: proc(s: ^obsidon.Scene) {
     my_scene.counter += 1
     // custom logic here
     log.info("create")
+
+    obsidon.set_clear_color(0.1, 0.2, 0.3, 1.0)
 }
 
 my_scene_update :: proc(s: ^obsidon.Scene, dt: f32) -> ^obsidon.Scene {

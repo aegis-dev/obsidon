@@ -25,6 +25,8 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
 
         window.poll_events()
 
+        renderer.begin_draw()
+
         new_scene := current_scene->on_update(0.0)
         if new_scene != nil {
             validate_scene(scene)
@@ -37,7 +39,21 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
         } else {
              current_scene->on_draw(0.0)
         }
+
+        renderer.end_draw_and_present()
     }
+}
+
+set_clear_color :: proc(r: f64, g: f64, b: f64, a: f64) {
+	renderer.set_clear_color(r, g, b, a)
+}
+
+load_sprite :: proc() {
+
+}
+
+draw_sprite :: proc() {
+	
 }
 
 @(private)

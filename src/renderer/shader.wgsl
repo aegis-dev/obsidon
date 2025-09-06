@@ -19,10 +19,10 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 }
 
 // Texture + sampler bindings
-@group(0) @binding(0) var myTexture: texture_2d<f32>;
-@group(0) @binding(1) var mySampler: sampler;
+@group(0) @binding(0) var my_texture: texture_2d<f32>;
+@group(0) @binding(1) var my_sampler: sampler;
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(myTexture, mySampler, input.tex_coords);
+    return textureSample(my_texture, my_sampler, input.tex_coords);
 }

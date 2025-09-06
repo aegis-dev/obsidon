@@ -4,21 +4,14 @@
         {
             "label": "Build Example Debug",
             "type": "shell",
-            "command": "odin build example -debug -out:bin/example.exe",
+            "command": "python build.py --debug --output-dir bin --source-dir example",
             "group": "build",
-            "dependsOn": "Create bin dir",
         },
         {
             "label": "Build Example Release",
             "type": "shell",
-            "command": "odin build example -release -out:bin/example.exe",
+            "command": "python build.py --output-dir bin --source-dir example",
             "group": "build",
-            "dependsOn": "Create bin dir",
         },
-        {
-            "label": "Create bin dir",
-            "type": "shell",
-            "command": "python -c \\\"import os; os.makedirs('bin', exist_ok=True)\\\"",
-        }
     ]
 }
