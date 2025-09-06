@@ -15,6 +15,8 @@ SHADER :: string(#load("shader.wgsl"))
 @(private)
 instance: struct {
 	ctx: 			 runtime.Context,
+	window_width: 	 u32,
+	window_height: 	 u32,
 	buffer_width: 	 u32,
 	buffer_height: 	 u32,
 	instance:        wgpu.Instance,
@@ -27,15 +29,20 @@ instance: struct {
 	pipeline_layout: wgpu.PipelineLayout,
 	pipeline:        wgpu.RenderPipeline,
 
-	clear_color:     	 [4]f64,
-	surface_texture: 	 wgpu.SurfaceTexture,
-	frame:		  	 	 wgpu.TextureView,
-	command_encoder: 	 wgpu.CommandEncoder,
-	render_pass_encoder: wgpu.RenderPassEncoder,
+	offscreen_texture:       wgpu.Texture,
+	offscreen_texture_view:  wgpu.TextureView,
+
+	clear_color:     	 	 [4]f64,
+	surface_texture: 		 wgpu.SurfaceTexture,
+	surface_texture_view:	 wgpu.TextureView,
+	command_encoder: 	 	 wgpu.CommandEncoder,
+	render_pass_encoder: 	 wgpu.RenderPassEncoder,
 }
 
-init :: proc(window: glfw.WindowHandle, buffer_width: u32, buffer_height: u32) {
+init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, buffer_width: u32, buffer_height: u32) {
 	instance.ctx = context
+	instance.window_width = window_width
+	instance.window_height = window_height
 	instance.buffer_width = buffer_width
 	instance.buffer_height = buffer_height
 
@@ -68,8 +75,8 @@ init :: proc(window: glfw.WindowHandle, buffer_width: u32, buffer_height: u32) {
 			device      = instance.device,
 			usage       = { .RenderAttachment },
 			format      = .BGRA8Unorm,
-			width       = instance.buffer_width,
-			height      = instance.buffer_height,
+			width       = instance.window_width,
+			height      = instance.window_height,
 			presentMode = .Fifo,
 			alphaMode   = .Opaque,
 		}
@@ -143,6 +150,15 @@ init :: proc(window: glfw.WindowHandle, buffer_width: u32, buffer_height: u32) {
 				mask  = 0xFFFFFFFF,
 			},
 		})
+
+		instance.offscreen_texture = wgpu.DeviceCreateTexture(instance.device, &{
+			size = wgpu.Extent3D{ width = instance.buffer_width, height = instance.buffer_height, depthOrArrayLayers = 1 },
+			format = .BGRA8Unorm,
+			usage = { .RenderAttachment, .TextureBinding },
+			mipLevelCount = 1,
+			sampleCount = 1,
+		})
+		instance.offscreen_texture_view = wgpu.TextureCreateView(instance.offscreen_texture, nil)
 	}
 }
 
@@ -168,13 +184,27 @@ begin_draw :: proc() {
 		log.panicf("Error: get_current_texture status=%v", instance.surface_texture.status)
 	}
 
-	instance.frame = wgpu.TextureCreateView(instance.surface_texture.texture, nil)
+	// instance.surface_texture_view = wgpu.TextureCreateView(instance.surface_texture.texture, nil)
+	// instance.command_encoder = wgpu.DeviceCreateCommandEncoder(instance.device, nil)
+	// instance.render_pass_encoder = wgpu.CommandEncoderBeginRenderPass(
+	// 	instance.command_encoder, &{
+	// 		colorAttachmentCount = 1,
+	// 		colorAttachments = &wgpu.RenderPassColorAttachment{
+	// 			view       = instance.surface_texture_view,
+	// 			loadOp     = .Clear,
+	// 			storeOp    = .Store,
+	// 			depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
+	// 			clearValue = instance.clear_color,
+	// 		},
+	// 	},
+	// )
+
 	instance.command_encoder = wgpu.DeviceCreateCommandEncoder(instance.device, nil)
 	instance.render_pass_encoder = wgpu.CommandEncoderBeginRenderPass(
 		instance.command_encoder, &{
 			colorAttachmentCount = 1,
 			colorAttachments = &wgpu.RenderPassColorAttachment{
-				view       = instance.frame,
+				view       = instance.offscreen_texture_view,
 				loadOp     = .Clear,
 				storeOp    = .Store,
 				depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
@@ -191,17 +221,51 @@ draw :: proc() {
 }
 
 end_draw_and_present :: proc() {
+	// Finish offscreen rendering
 	wgpu.RenderPassEncoderEnd(instance.render_pass_encoder)
 	wgpu.RenderPassEncoderRelease(instance.render_pass_encoder)
 
-	command_buffer := wgpu.CommandEncoderFinish(instance.command_encoder, nil)
+	offscreen_command_buffer := wgpu.CommandEncoderFinish(instance.command_encoder, nil)
+	defer wgpu.CommandBufferRelease(offscreen_command_buffer)
 
-	wgpu.QueueSubmit(instance.queue, { command_buffer })
-	wgpu.SurfacePresent(instance.surface)
-
-	wgpu.CommandBufferRelease(command_buffer)
 	wgpu.CommandEncoderRelease(instance.command_encoder)
-	wgpu.TextureViewRelease(instance.frame)
+
+	// Render to the the screen surface
+	instance.surface_texture_view = wgpu.TextureCreateView(instance.surface_texture.texture, nil)
+	defer wgpu.TextureViewRelease(instance.surface_texture_view)
+
+	instance.command_encoder = wgpu.DeviceCreateCommandEncoder(instance.device, nil)
+	instance.render_pass_encoder = wgpu.CommandEncoderBeginRenderPass(
+		instance.command_encoder, &{
+			colorAttachmentCount = 1,
+			colorAttachments = &wgpu.RenderPassColorAttachment{
+				view       = instance.surface_texture_view,
+				loadOp     = .Clear,
+				storeOp    = .Store,
+				depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
+				clearValue = instance.clear_color,
+			},
+		},
+	)
+	
+	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
+
+	// Render...
+	// TODO: load vertex buffer
+	//wgpu.RenderPassEncoderDraw(instance.render_pass_encoder,vertexCount =3, instanceCount=1, firstVertex=0, firstInstance=0)
+
+	// Finish screen rendering
+	wgpu.RenderPassEncoderEnd(instance.render_pass_encoder)
+	wgpu.RenderPassEncoderRelease(instance.render_pass_encoder)
+
+	screen_command_buffer := wgpu.CommandEncoderFinish(instance.command_encoder, nil)
+	defer wgpu.CommandBufferRelease(screen_command_buffer)
+
+	wgpu.CommandEncoderRelease(instance.command_encoder)
+
+	// Submit and present
+	wgpu.QueueSubmit(instance.queue, { offscreen_command_buffer, screen_command_buffer })
+	wgpu.SurfacePresent(instance.surface)
 }
 
 @(private)
