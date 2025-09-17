@@ -33,6 +33,7 @@ instance: struct {
 	sampler: 	 	   wgpu.Sampler,
 
 	clear_color:     	 	 [4]f64,
+	black_clear_color:       [4]f64,
 	surface_texture: 		 wgpu.SurfaceTexture,
 	surface_texture_view:	 wgpu.TextureView,
 	command_encoder: 	 	 wgpu.CommandEncoder,
@@ -248,6 +249,13 @@ begin_draw :: proc() {
 		},
 	)
 
+	set_viewport(
+		instance.offscreen_quad.texture.width, 
+		instance.offscreen_quad.texture.height,
+		instance.offscreen_quad.texture.width, 
+		instance.offscreen_quad.texture.height
+	)
+
 	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
 }
 
@@ -269,6 +277,8 @@ end_draw_and_present :: proc() {
 	instance.surface_texture_view = wgpu.TextureCreateView(instance.surface_texture.texture, nil)
 	defer wgpu.TextureViewRelease(instance.surface_texture_view)
 
+	black_clear_color := [4]f64{0.0, 0.0, 0.0, 1.0}
+
 	instance.command_encoder = wgpu.DeviceCreateCommandEncoder(instance.device, nil)
 	instance.render_pass_encoder = wgpu.CommandEncoderBeginRenderPass(
 		instance.command_encoder, &{
@@ -278,10 +288,17 @@ end_draw_and_present :: proc() {
 				loadOp     = .Clear,
 				storeOp    = .Store,
 				depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
-				clearValue = instance.clear_color,
+				clearValue = black_clear_color,
 			},
 		},
 	)
+
+	viewport_width, viewport_height := fit_rectangle_in_rectangle(
+		f32(instance.buffer_width), f32(instance.buffer_height),
+		f32(instance.window_width), f32(instance.window_height)
+	)
+
+	set_viewport(u32(viewport_width), u32(viewport_height), instance.window_width, instance.window_height)
 	
 	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
 
@@ -409,26 +426,76 @@ create_texture_from_texture_and_texture_view :: proc(texture: wgpu.Texture, text
 	return Texture {width, height, texture, texture_view, bind_group}
 }
 
-
 @(private)
-get_sprite_quad :: proc(width: u32, height: u32) -> []Vertex {
-	width  := f32(width)
-	height := f32(height)
+set_viewport :: proc(viewport_width: u32, viewport_height: u32, window_width: u32, window_height: u32) {
+	viewport_width := f32(viewport_width)
+	viewport_height := f32(viewport_height)
+	window_width := f32(window_width)
+	window_height := f32(window_height)
 
-	vertices := []Vertex {
-		//      positions                  tex coords
-		Vertex {Vec3 {width, 0.0,    0.0}, Vec2 {1.0, 1.0}},
-		Vertex {Vec3 {width, height, 0.0}, Vec2 {1.0, 0.0}},
-		Vertex {Vec3 {0.0,   0.0,    0.0}, Vec2 {0.0, 1.0}},
-		Vertex {Vec3 {0.0,   0.0,    0.0}, Vec2 {0.0, 1.0}},
-		Vertex {Vec3 {width, height, 0.0}, Vec2 {1.0, 0.0}},
-		Vertex {Vec3 {0.0,   height, 0.0}, Vec2 {0.0, 0.0}},
-	}
+    aspect_ratio := viewport_width / viewport_height
+    window_aspect_ratio := window_width / window_height
+    tolerance: f32 = 1e-2
+    same_aspect_ratio := abs(aspect_ratio - window_aspect_ratio) < tolerance
+    narrow := aspect_ratio < window_aspect_ratio
 
-	return vertices
+    x: f32 = 0
+    y: f32 = 0
+    width: f32 = window_width
+    height: f32 = window_height
+
+    if same_aspect_ratio {
+        x = 0
+        y = 0
+        width = viewport_width
+        height = viewport_height
+    } else if narrow {
+        min_height := min(viewport_height, window_height)
+        max_height := max(viewport_height, window_height)
+        modifier := max_height / min_height
+        new_width := viewport_width * modifier
+        new_height := window_height
+        offset := (window_width - new_width) / 2
+        x = offset
+        y = 0
+        width = new_width
+        height = new_height
+    } else {
+        min_width := min(viewport_width, window_width)
+        max_width := max(viewport_width, window_width)
+        modifier := max_width / min_width
+        new_width := window_width
+        new_height := viewport_height * modifier
+        x = 0
+        y = (window_height - new_height) / 2
+        width = new_width
+        height = new_height
+    }
+	
+    wgpu.RenderPassEncoderSetViewport(
+        instance.render_pass_encoder,
+        x, y, width, height,
+        0.0, 1.0
+    )
 }
 
+@(private)
+fit_rectangle_in_rectangle :: proc(inner_width: f32, inner_height: f32, outer_width: f32, outer_height: f32) -> (f32, f32) {
+	inner_aspect := inner_width / inner_height
+	outer_aspect := outer_width / outer_height
 
+	if inner_aspect > outer_aspect {
+		// Fit to width
+		new_width := outer_width
+		new_height := outer_width / inner_aspect
+		return new_width, new_height
+	} else {
+		// Fit to height
+		new_height := outer_height
+		new_width := outer_height * inner_aspect
+		return new_width, new_height
+	}
+}
 
 cleanup :: proc() {
 

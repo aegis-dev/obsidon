@@ -48,14 +48,6 @@ set_clear_color :: proc(r: f64, g: f64, b: f64, a: f64) {
 	renderer.set_clear_color(r, g, b, a)
 }
 
-load_sprite :: proc() {
-
-}
-
-draw_sprite :: proc() {
-	
-}
-
 @(private)
 validate_scene :: proc(scene: ^Scene) {
     if scene.on_create == nil {
