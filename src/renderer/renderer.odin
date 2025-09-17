@@ -1,5 +1,6 @@
 package renderer
 
+import "core:image/png"
 import "base:runtime"
 
 import "core:log"
@@ -14,29 +15,30 @@ SHADER :: string(#load("shader.wgsl"))
 
 @(private)
 instance: struct {
-	ctx: 			 runtime.Context,
-	window_width: 	 u32,
-	window_height: 	 u32,
-	buffer_width: 	 u32,
-	buffer_height: 	 u32,
-	instance:        wgpu.Instance,
-	surface:         wgpu.Surface,
-	adapter:         wgpu.Adapter,
-	device:          wgpu.Device,
-	config:          wgpu.SurfaceConfiguration,
-	queue:           wgpu.Queue,
-	module:          wgpu.ShaderModule,
-	pipeline_layout: wgpu.PipelineLayout,
-	pipeline:        wgpu.RenderPipeline,
-
-	offscreen_texture:       wgpu.Texture,
-	offscreen_texture_view:  wgpu.TextureView,
+	ctx: 			   runtime.Context,
+	window_width: 	   u32,
+	window_height: 	   u32,
+	buffer_width: 	   u32,
+	buffer_height: 	   u32,
+	instance:          wgpu.Instance,
+	surface:           wgpu.Surface,
+	adapter:           wgpu.Adapter,
+	device:            wgpu.Device,
+	config:            wgpu.SurfaceConfiguration,
+	queue:             wgpu.Queue,
+	module:            wgpu.ShaderModule,
+	bind_group_layout: wgpu.BindGroupLayout,
+	pipeline_layout:   wgpu.PipelineLayout,
+	pipeline:          wgpu.RenderPipeline,
+	sampler: 	 	   wgpu.Sampler,
 
 	clear_color:     	 	 [4]f64,
 	surface_texture: 		 wgpu.SurfaceTexture,
 	surface_texture_view:	 wgpu.TextureView,
 	command_encoder: 	 	 wgpu.CommandEncoder,
 	render_pass_encoder: 	 wgpu.RenderPassEncoder,
+
+	offscreen_quad: TexturedModel,
 }
 
 init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, buffer_width: u32, buffer_height: u32) {
@@ -91,37 +93,49 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 			},
 		})
 
-		vertex_attributes := make([^]wgpu.VertexAttribute, 2) // length 2, zero-initialized
-		vertex_attributes[0] = wgpu.VertexAttribute{ format = .Float32x3, offset = 0, shaderLocation = 0 }
-		vertex_attributes[1] = wgpu.VertexAttribute{ format = .Float32x2, offset = size_of(Vec3), shaderLocation = 1 }
+		vertex_attributes := [2]wgpu.VertexAttribute {
+			{ format = .Float32x3, offset = 0, shaderLocation = 0 },
+			{ format = .Float32x2, offset = size_of(Vec3), shaderLocation = 1 }
+		}
 
 		vertex_buffer_layout := wgpu.VertexBufferLayout {
 			arrayStride    = size_of(Vec3) + size_of(Vec2), // 3 floats + 2 floats
 			stepMode       = .Vertex,
-			attributeCount = 2,
-			attributes     = vertex_attributes,
+			attributeCount = len(vertex_attributes),
+			attributes     = &vertex_attributes[0],
+		}
+		
+		instance.sampler = wgpu.DeviceCreateSampler(instance.device, &{
+			magFilter = .Nearest,
+			minFilter = .Nearest,
+			mipmapFilter = .Nearest,
+			lodMinClamp = 1.0,
+			lodMaxClamp = 1.0,
+			compare = .Undefined,
+			maxAnisotropy = 1,
+		})
+
+		bind_group_layout_entries := [2]wgpu.BindGroupLayoutEntry {
+			{
+				binding    = 0,
+				visibility = { .Fragment },
+				texture    = { sampleType = .Float, viewDimension = ._2D, multisampled = false },
+			},
+			{
+				binding    = 1,
+				visibility = { .Fragment },
+				sampler    = { type = .Filtering },
+			},
 		}
 
-		bind_group_layout_entrys := make([^]wgpu.BindGroupLayoutEntry, 2)
-		bind_group_layout_entrys[0] = wgpu.BindGroupLayoutEntry{
-			binding    = 0,
-			visibility = { .Fragment },
-			texture    = { sampleType = .Float, viewDimension = ._2D, multisampled = false },
-		}
-		bind_group_layout_entrys[1] = wgpu.BindGroupLayoutEntry{
-			binding    = 1,
-			visibility = { .Fragment },
-			sampler    = { type = .Filtering },
-		}
-
-		bind_group_layout := wgpu.DeviceCreateBindGroupLayout(instance.device, &wgpu.BindGroupLayoutDescriptor{
-			entryCount = 2,
-			entries    = bind_group_layout_entrys
+		instance.bind_group_layout = wgpu.DeviceCreateBindGroupLayout(instance.device, &wgpu.BindGroupLayoutDescriptor{
+			entryCount = len(bind_group_layout_entries),
+			entries    = &bind_group_layout_entries[0]
 		})
 
 		instance.pipeline_layout = wgpu.DeviceCreatePipelineLayout(instance.device, &{
 			bindGroupLayoutCount = 1,
-			bindGroupLayouts     = &bind_group_layout,
+			bindGroupLayouts     = &instance.bind_group_layout,
 		})
 
 		instance.pipeline = wgpu.DeviceCreateRenderPipeline(instance.device, &{
@@ -151,14 +165,35 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 			},
 		})
 
-		instance.offscreen_texture = wgpu.DeviceCreateTexture(instance.device, &{
+		offscreen_quad := []Vertex {
+			//      positions               tex coords
+			Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}},
+			Vertex {Vec3 { 1.0,  1.0, 0.0}, Vec2 {1.0, 0.0}},
+			Vertex {Vec3 {-1.0, -1.0, 0.0}, Vec2 {0.0, 1.0}},
+			Vertex {Vec3 {-1.0, -1.0, 0.0}, Vec2 {0.0, 1.0}},
+			Vertex {Vec3 { 1.0,  1.0, 0.0}, Vec2 {1.0, 0.0}},
+			Vertex {Vec3 {-1.0,  1.0, 0.0}, Vec2 {0.0, 0.0}},
+		}
+		offscreen_quad_buffer := load_vertex_buffer(offscreen_quad)
+
+		offscreen_texture := wgpu.DeviceCreateTexture(instance.device, &{
 			size = wgpu.Extent3D{ width = instance.buffer_width, height = instance.buffer_height, depthOrArrayLayers = 1 },
 			format = .BGRA8Unorm,
 			usage = { .RenderAttachment, .TextureBinding },
 			mipLevelCount = 1,
 			sampleCount = 1,
 		})
-		instance.offscreen_texture_view = wgpu.TextureCreateView(instance.offscreen_texture, nil)
+		offscreen_texture_view := wgpu.TextureCreateView(offscreen_texture, nil)
+
+		instance.offscreen_quad = TexturedModel {
+			model = offscreen_quad_buffer,
+			texture = create_texture_from_texture_and_texture_view(
+				offscreen_texture,
+				offscreen_texture_view,
+				instance.buffer_width,
+				instance.buffer_height
+			)
+		}
 	}
 }
 
@@ -204,7 +239,7 @@ begin_draw :: proc() {
 		instance.command_encoder, &{
 			colorAttachmentCount = 1,
 			colorAttachments = &wgpu.RenderPassColorAttachment{
-				view       = instance.offscreen_texture_view,
+				view       = instance.offscreen_quad.texture.view,
 				loadOp     = .Clear,
 				storeOp    = .Store,
 				depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
@@ -250,9 +285,8 @@ end_draw_and_present :: proc() {
 	
 	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
 
-	// Render...
-	// TODO: load vertex buffer
-	//wgpu.RenderPassEncoderDraw(instance.render_pass_encoder,vertexCount =3, instanceCount=1, firstVertex=0, firstInstance=0)
+	// Render offscreen texture quad to screen
+	render_textured_model(&instance.offscreen_quad)
 
 	// Finish screen rendering
 	wgpu.RenderPassEncoderEnd(instance.render_pass_encoder)
@@ -269,24 +303,129 @@ end_draw_and_present :: proc() {
 }
 
 @(private)
-get_sprite_quad :: proc(width: u32, height: u32) -> (vertice: []f32, indice: []u32) {
-	half_width  := f32(width)  / 2.0
-	half_height := f32(height) / 2.0
+render_textured_model :: proc(textured_model: ^TexturedModel) {
+	wgpu.RenderPassEncoderSetVertexBuffer(
+		instance.render_pass_encoder, 
+		0, 
+		textured_model.model.vertex_buffer, 
+		0, 
+		textured_model.model.buffer_size
+	)
 
-	vertice = []f32 {
-		// positions               		  // tex coords
-		-half_width, -half_height, 0.0,   0.0, 1.0,
-		 half_width, -half_height, 0.0,   1.0, 1.0,
-		 half_width,  half_height, 0.0,   1.0, 0.0,
-		-half_width,  half_height, 0.0,   0.0, 0.0,
+	wgpu.RenderPassEncoderSetBindGroup(
+		instance.render_pass_encoder,
+		0,          
+		textured_model.texture.bind_group
+	)
+
+	wgpu.RenderPassEncoderDraw(
+		instance.render_pass_encoder,
+		vertexCount=textured_model.model.vertex_count, 
+		instanceCount=1, 
+		firstVertex=0, 
+		firstInstance=0
+	)
+}
+
+load_vertex_buffer :: proc(vertices: []Vertex) -> Model {
+	vertex_buffer_size := u64(size_of(Vertex) * len(vertices))
+
+	vertex_buffer := wgpu.DeviceCreateBuffer(instance.device, &{
+		size  = vertex_buffer_size,
+		usage = { .Vertex, .CopyDst },
+		mappedAtCreation = false,
+	})
+
+	wgpu.QueueWriteBuffer(instance.queue, vertex_buffer, 0, rawptr(&vertices[0]), uint(vertex_buffer_size))
+
+	return Model {vertex_buffer, u32(len(vertices)), vertex_buffer_size}
+}
+
+load_texture_from_png :: proc(png_data: []u8) -> Texture {
+	image, err := png.load_from_bytes(png_data)
+	if err != nil {
+		log.panic("Failed to load PNG image")
+	}
+	defer png.destroy(image)
+
+	// Create texture
+	texture := wgpu.DeviceCreateTexture(instance.device, &{
+		size = wgpu.Extent3D{ width = u32(image.width), height = u32(image.height), depthOrArrayLayers = 1 },
+		format = .RGBA8Unorm,
+		usage = { .TextureBinding, .CopyDst },
+		mipLevelCount = 1,
+		sampleCount = 1,
+	})
+	texture_view := wgpu.TextureCreateView(texture, nil)
+
+	// Upload texture data
+	row_pitch := u32(4 * image.width) // 4 bytes per pixel (RGBA)
+	data_size := row_pitch * u32(image.height)
+
+	destination_info := wgpu.TexelCopyTextureInfo{
+		texture   = texture,
+		mipLevel  = 0,
+		origin    = wgpu.Origin3D{0, 0, 0},
+		aspect    = .All,
 	}
 
-	indice = []u32 {
-		0, 1, 2,
-		2, 3, 0,
+	data_layout := wgpu.TexelCopyBufferLayout{
+		offset        = 0,
+		bytesPerRow   = row_pitch,
+		rowsPerImage  = u32(image.height),
 	}
 
-	return
+	write_size_info := wgpu.Extent3D{
+		width         = u32(image.width),
+		height        = u32(image.height),
+		depthOrArrayLayers = 1,
+	}
+
+	wgpu.QueueWriteTexture(instance.queue, &destination_info, &image.pixels.buf[0], uint(data_size), &data_layout, &write_size_info)
+
+	return create_texture_from_texture_and_texture_view(texture, texture_view, u32(image.width), u32(image.height))
+}
+
+@(private)
+create_texture_from_texture_and_texture_view :: proc(texture: wgpu.Texture, texture_view: wgpu.TextureView, width: u32, height: u32) -> Texture {
+	// Create a bind group for the texture and sampler
+	bind_group_entries := [2]wgpu.BindGroupEntry {
+		{
+			binding = 0,
+			textureView = texture_view,
+		},
+		{
+			binding = 1,
+			sampler = instance.sampler,
+		}
+	}
+
+	bind_group := wgpu.DeviceCreateBindGroup(instance.device, &wgpu.BindGroupDescriptor{
+		layout = instance.bind_group_layout, // The layout you created in your pipeline
+		entryCount = len(bind_group_entries),
+		entries = &bind_group_entries[0],
+	})
+
+	return Texture {width, height, texture, texture_view, bind_group}
+}
+
+
+@(private)
+get_sprite_quad :: proc(width: u32, height: u32) -> []Vertex {
+	width  := f32(width)
+	height := f32(height)
+
+	vertices := []Vertex {
+		//      positions                  tex coords
+		Vertex {Vec3 {width, 0.0,    0.0}, Vec2 {1.0, 1.0}},
+		Vertex {Vec3 {width, height, 0.0}, Vec2 {1.0, 0.0}},
+		Vertex {Vec3 {0.0,   0.0,    0.0}, Vec2 {0.0, 1.0}},
+		Vertex {Vec3 {0.0,   0.0,    0.0}, Vec2 {0.0, 1.0}},
+		Vertex {Vec3 {width, height, 0.0}, Vec2 {1.0, 0.0}},
+		Vertex {Vec3 {0.0,   height, 0.0}, Vec2 {0.0, 0.0}},
+	}
+
+	return vertices
 }
 
 

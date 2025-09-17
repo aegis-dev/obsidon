@@ -11,10 +11,10 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
 
     name_cstr := strings.unsafe_string_to_cstring(name)
 
-    window.init(name_cstr)
+    window_width, window_height := window.init(name_cstr)
     defer window.cleanup()
 
-    renderer.init(window.get_window_handle(), buffer_width, buffer_height)
+    renderer.init(window.get_window_handle(), window_width, window_height, buffer_width, buffer_height)
     defer renderer.cleanup()
 
     current_scene := scene

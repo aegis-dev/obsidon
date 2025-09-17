@@ -13,7 +13,7 @@ instance: struct {
    window: glfw.WindowHandle
 }
 
-init :: proc(name: cstring) {
+init :: proc(name: cstring) -> (window_width: u32, window_height: u32) {
     glfw.SetErrorCallback(glfw_error_callback)
 
     if !glfw.Init() {
@@ -46,6 +46,8 @@ init :: proc(name: cstring) {
 
     glfw.MakeContextCurrent(instance.window);
     glfw.SwapInterval(1);
+
+    return u32(width), u32(height)
 }
 
 cleanup :: proc() {

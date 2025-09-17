@@ -57,5 +57,5 @@ main :: proc() {
 
     scene := create_scene()
 
-    obsidon.run_game("game", 800, 600, scene)
+    obsidon.run_game("game", 600, 600, scene)
 }
