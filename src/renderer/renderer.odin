@@ -1,6 +1,5 @@
 package renderer
 
-import "core:image/png"
 import "base:runtime"
 
 import "core:log"
@@ -59,8 +58,6 @@ instance: struct {
 	camera_angle:      	f32,
 	camera_zoom:	   	f32,
 
-	offscreen_color_override: 	   	Vec4,
-	use_offscreen_color_override: 	bool,
 	screen_color_override: 	   		Vec4,
 	use_screen_color_override: 		bool,
 
@@ -237,7 +234,7 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 			Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}}, // bottom-right
 			Vertex {Vec3 {-1.0, -1.0, 0.0}, Vec2 {0.0, 1.0}}, // bottom-left
 		}
-		offscreen_quad_buffer := load_vertex_buffer(offscreen_quad)
+		offscreen_quad_buffer := model_load(offscreen_quad)
 
 		offscreen_texture := wgpu.DeviceCreateTexture(instance.device, &{
 			size = wgpu.Extent3D{ width = instance.buffer_width, height = instance.buffer_height, depthOrArrayLayers = 1 },
@@ -322,22 +319,95 @@ begin_draw :: proc() {
 }
 
 draw :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32) {
-	draw_textured_model(textured_model, position, origin, angle, flip, scale, instance.camera_zoom)
+	draw_textured_model(
+		textured_model, 
+		position, 
+		origin, 
+		angle, 
+		flip, 
+		scale, 
+		instance.camera_zoom,
+		Vec4{},
+		false
+	)
 }
 
+draw_colored :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32, color: Vec4) {
+	draw_textured_model(
+		textured_model, 
+		position, 
+		origin, 
+		angle, 
+		flip, 
+		scale, 
+		instance.camera_zoom,
+		color,
+		true
+	)
+}
+
+
 draw_ui :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32) {
-	draw_textured_model(textured_model, position, origin, angle, flip, scale, 1.0)
+		draw_textured_model(
+		textured_model, 
+		position, 
+		origin, 
+		angle, 
+		flip, 
+		scale, 
+		1.0,
+		Vec4{},
+		false
+	)
+}
+
+draw_ui_colored :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32, color: Vec4) {
+	draw_textured_model(
+		textured_model, 
+		position, 
+		origin, 
+		angle, 
+		flip, 
+		scale, 
+		1.0,
+		color,
+		true
+	)
 }
 
 @(private)
-draw_textured_model :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32, zoom: f32) {
+draw_textured_model :: proc(
+	textured_model: ^TexturedModel, 
+	position: Vec2, 
+	origin: Vec2, 
+	angle: f32, 
+	flip: bool, 
+	scale: f32, 
+	zoom: f32, 
+	color: Vec4, 
+	use_color: bool
+) {
+	mvp_matrix := create_mvp_matrix(position, origin, angle, scale, zoom)
+	metadata := DrawCallMetadata {
+		mvp = mvp_matrix,
+		color = color,
+		use_color = 1.0 if use_color else 0.0,
+		flip_x = 1.0 if flip else 0.0,
+		flip_y = 0.0,
+	}
+
+	render_textured_model(textured_model, &metadata)
+}
+
+@(private)
+create_mvp_matrix :: proc(position: Vec2, origin: Vec2, angle: f32, scale: f32, zoom: f32) -> linalg.Matrix4x4f32 {
 	RADIAN_MUL: f32 = math.PI / 180.0
 	
 	// Model = T(position) * Rz(angle) * S(scale) * T(-origin)
-    model_matrix := linalg.matrix4_translate_f32(Vec3{-position.x, position.y, 0.0})
-    model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_rotate_f32(angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
-    model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_scale_f32(Vec3{scale, scale, 1.0}))
-    model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_translate_f32(Vec3{-origin.x, -origin.y, 0.0}))
+	model_matrix := linalg.matrix4_translate_f32(Vec3{position.x, position.y, 0.0})
+	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_rotate_f32(angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
+	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_scale_f32(Vec3{scale, scale, 1.0}))
+	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_translate_f32(Vec3{-origin.x, -origin.y, 0.0}))
 	
 	// View matrix
 	frame_buffer_half_width := f32(instance.buffer_width) / 2.0
@@ -350,15 +420,7 @@ draw_textured_model :: proc(textured_model: ^TexturedModel, position: Vec2, orig
 	mvp_matrix := linalg.matrix_mul(instance.projection_matrix, view_matrix)
 	mvp_matrix = linalg.matrix_mul(mvp_matrix, model_matrix)
 
-	metadata := DrawCallMetadata {
-		mvp = mvp_matrix,
-		color = instance.offscreen_color_override,
-		use_color = 1.0 if instance.use_offscreen_color_override else 0.0,
-		flip_x = 1.0 if flip else 0.0,
-		flip_y = 0.0,
-	}
-
-	render_textured_model(textured_model, &metadata)
+	return mvp_matrix
 }
 
 end_draw_and_present :: proc() {
@@ -460,94 +522,6 @@ render_textured_model :: proc(textured_model: ^TexturedModel, draw_call_metadata
 	instance.draw_call += 1
 }
 
-load_vertex_buffer :: proc(vertices: []Vertex) -> Model {
-	vertex_buffer_size := u64(size_of(Vertex) * len(vertices))
-
-	vertex_buffer := wgpu.DeviceCreateBuffer(instance.device, &{
-		size  = vertex_buffer_size,
-		usage = { .Vertex, .CopyDst },
-		mappedAtCreation = false,
-	})
-
-	wgpu.QueueWriteBuffer(instance.queue, vertex_buffer, 0, rawptr(&vertices[0]), uint(vertex_buffer_size))
-
-	return Model {vertex_buffer, u32(len(vertices)), vertex_buffer_size}
-}
-
-load_texture_from_png :: proc(png_data: []u8) -> Texture {
-	image, err := png.load_from_bytes(png_data)
-	if err != nil {
-		log.panic("Failed to load PNG image")
-	}
-	defer png.destroy(image)
-
-	// Create texture
-	texture := wgpu.DeviceCreateTexture(instance.device, &{
-		size = wgpu.Extent3D{ width = u32(image.width), height = u32(image.height), depthOrArrayLayers = 1 },
-		format = .RGBA8Unorm,
-		usage = { .TextureBinding, .CopyDst },
-		mipLevelCount = 1,
-		sampleCount = 1,
-	})
-	texture_view := wgpu.TextureCreateView(texture, nil)
-
-	// Upload texture data
-	row_pitch := u32(4 * image.width) // 4 bytes per pixel (RGBA)
-	data_size := row_pitch * u32(image.height)
-
-	destination_info := wgpu.TexelCopyTextureInfo{
-		texture   = texture,
-		mipLevel  = 0,
-		origin    = wgpu.Origin3D{0, 0, 0},
-		aspect    = .All,
-	}
-
-	data_layout := wgpu.TexelCopyBufferLayout{
-		offset        = 0,
-		bytesPerRow   = row_pitch,
-		rowsPerImage  = u32(image.height),
-	}
-
-	write_size_info := wgpu.Extent3D{
-		width         = u32(image.width),
-		height        = u32(image.height),
-		depthOrArrayLayers = 1,
-	}
-
-	wgpu.QueueWriteTexture(instance.queue, &destination_info, &image.pixels.buf[0], uint(data_size), &data_layout, &write_size_info)
-
-	return create_texture_from_texture_and_texture_view(texture, texture_view, u32(image.width), u32(image.height))
-}
-
-@(private)
-create_texture_from_texture_and_texture_view :: proc(texture: wgpu.Texture, texture_view: wgpu.TextureView, width: u32, height: u32) -> Texture {
-	// Create a bind group for the texture and sampler
-	bind_group_entries := [3]wgpu.BindGroupEntry {
-		{
-			binding = 0,
-			textureView = texture_view,
-		},
-		{
-			binding = 1,
-			sampler = instance.sampler,
-		},
-		{
-			binding = 2,
-			buffer = instance.storage_buffer,
-			offset = 0,
-			size   = MAX_DRAW_CALLS * size_of(DrawCallMetadata),
-		}
-	}
-
-	bind_group := wgpu.DeviceCreateBindGroup(instance.device, &wgpu.BindGroupDescriptor{
-		layout = instance.bind_group_layout,
-		entryCount = len(bind_group_entries),
-		entries = &bind_group_entries[0],
-	})
-
-	return Texture {width, height, texture, texture_view, bind_group}
-}
-
 @(private)
 set_viewport :: proc(viewport_width: u32, viewport_height: u32, window_width: u32, window_height: u32) {
 	viewport_width := f32(viewport_width)
@@ -641,15 +615,6 @@ get_camera_angle :: proc() -> f32 {
 
 get_camera_zoom :: proc() -> f32 {
 	return instance.camera_zoom
-}
-
-set_offscreen_color_override :: proc(color: Vec4) {
-	instance.offscreen_color_override = color
-	instance.use_offscreen_color_override = true
-}
-
-clear_offscreen_color_override :: proc() {
-	instance.use_offscreen_color_override = false
 }
 
 set_screen_color_override :: proc(color: Vec4) {

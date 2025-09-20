@@ -37,7 +37,7 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
         }
 
         time_now := time.now()
-        delta_time = time.duration_seconds(time.diff(time_now, last_frame_time))
+        delta_time = time.duration_seconds(time.diff(last_frame_time, time_now))
         last_frame_time = time_now
 
         renderer.begin_draw()

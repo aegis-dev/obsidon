@@ -61,5 +61,6 @@ refresh_mouse_position :: proc() {
 
     normalized := delta * instance.mouse_sensitivity
     
-    instance.mouse_position -= normalized
+    instance.mouse_position.x += normalized.x
+    instance.mouse_position.y -= normalized.y
 }

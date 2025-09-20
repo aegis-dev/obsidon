@@ -9,9 +9,9 @@ Sprite :: struct {
 }
 
 sprite_load :: proc(png_data: []u8) -> Sprite {
-    texture := renderer.load_texture_from_png(png_data)
+    texture := renderer.texture_load_from_png_bytes(png_data)
     quad_vertices := get_sprite_quad(texture.width, texture.height)
-    model := renderer.load_vertex_buffer(quad_vertices[:])
+    model := renderer.model_load(quad_vertices[:])
     return Sprite {
         texture.width,
         texture.height,
@@ -22,22 +22,27 @@ sprite_load :: proc(png_data: []u8) -> Sprite {
     }
 }
 
-sprite_destroy :: proc(sprite: Sprite) {
-    // TODO
+sprite_destroy :: proc(sprite: ^Sprite) {
+    renderer.texture_destroy(&sprite.textured_model.texture)
+    renderer.model_destroy(&sprite.textured_model.model)
 }
 
 sprite_draw :: proc(sprite: ^Sprite, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32) {
 	renderer.draw(&sprite.textured_model, position, origin, angle, flip, scale)
 }
 
-set_sprite_color_override :: proc(color: Vec4) {
-    renderer.set_offscreen_color_override(color)
+sprite_draw_ui :: proc(sprite: ^Sprite, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32) {
+	renderer.draw_ui(&sprite.textured_model, position, origin, angle, flip, scale)
 }
 
-clear_sprite_color_override :: proc() {
-    renderer.clear_offscreen_color_override()
+sprite_draw_colored :: proc(sprite: ^Sprite, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32, color: Vec4) {
+	renderer.draw_colored(&sprite.textured_model, position, origin, angle, flip, scale, color)
 }
 
+sprite_draw_ui_colored :: proc(sprite: ^Sprite, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32, color: Vec4) {
+	renderer.draw_ui_colored(&sprite.textured_model, position, origin, angle, flip, scale, color)
+}
+    
 @(private)
 get_sprite_quad :: proc(width: u32, height: u32) -> [6]renderer.Vertex {
 	width  := f32(width)
