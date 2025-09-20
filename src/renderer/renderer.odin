@@ -6,12 +6,27 @@ import "base:runtime"
 import "core:log"
 import "core:slice"
 import "core:strings"
+import "core:math"
+import "core:math/linalg"
 
 import "vendor:wgpu"
 import "vendor:glfw"
 import "vendor:wgpu/glfwglue"
 
 SHADER :: string(#load("shader.wgsl"))
+
+@(private)
+DrawCallMetadata :: struct #packed {
+	mvp: 	   linalg.Matrix4x4f32,
+	color: 	   Vec4,
+	use_color: f32,
+	flip_x:    f32,
+	flip_y:    f32,
+	_padding:  [1]f32,
+}
+
+// Also in shader.wgsl
+MAX_DRAW_CALLS :: 8192
 
 @(private)
 instance: struct {
@@ -31,15 +46,26 @@ instance: struct {
 	pipeline_layout:   wgpu.PipelineLayout,
 	pipeline:          wgpu.RenderPipeline,
 	sampler: 	 	   wgpu.Sampler,
+	storage_buffer:    wgpu.Buffer,
 
-	clear_color:     	 	 [4]f64,
-	black_clear_color:       [4]f64,
 	surface_texture: 		 wgpu.SurfaceTexture,
 	surface_texture_view:	 wgpu.TextureView,
 	command_encoder: 	 	 wgpu.CommandEncoder,
 	render_pass_encoder: 	 wgpu.RenderPassEncoder,
+	offscreen_quad: 	     TexturedModel,
 
-	offscreen_quad: TexturedModel,
+	clear_color:       	[4]f64,
+	camera_position:   	Vec2,
+	camera_angle:      	f32,
+	camera_zoom:	   	f32,
+
+	offscreen_color_override: 	   	Vec4,
+	use_offscreen_color_override: 	bool,
+	screen_color_override: 	   		Vec4,
+	use_screen_color_override: 		bool,
+
+	projection_matrix: 	linalg.Matrix4x4f32,
+	draw_call: u64,
 }
 
 init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, buffer_width: u32, buffer_height: u32) {
@@ -64,7 +90,16 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 			log.panic("request adapter failure: [%v] %s", status, message)
 		}
 		instance.adapter = adapter
-		wgpu.AdapterRequestDevice(adapter, nil, { callback = on_device })
+
+		required_features := wgpu.FeatureName.VertexWritableStorage; // or VERTEX_READ_STORAGE if available
+
+		wgpu.AdapterRequestDevice(adapter, 
+			&wgpu.DeviceDescriptor{
+				requiredFeatureCount = 1,
+				requiredFeatures = &required_features,
+			}, 
+			{ callback = on_device }
+		)
 	}
 
 	on_device :: proc "c" (status: wgpu.RequestDeviceStatus, device: wgpu.Device, message: string, userdata1: rawptr, userdata2: rawptr) {
@@ -100,7 +135,7 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 		}
 
 		vertex_buffer_layout := wgpu.VertexBufferLayout {
-			arrayStride    = size_of(Vec3) + size_of(Vec2), // 3 floats + 2 floats
+			arrayStride    = size_of(Vertex),
 			stepMode       = .Vertex,
 			attributeCount = len(vertex_attributes),
 			attributes     = &vertex_attributes[0],
@@ -116,7 +151,13 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 			maxAnisotropy = 1,
 		})
 
-		bind_group_layout_entries := [2]wgpu.BindGroupLayoutEntry {
+		instance.storage_buffer = wgpu.DeviceCreateBuffer(instance.device, &{
+			size = MAX_DRAW_CALLS * size_of(DrawCallMetadata),
+			usage = { .Storage, .CopyDst },
+			mappedAtCreation = false,
+		})
+
+		bind_group_layout_entries := [3]wgpu.BindGroupLayoutEntry {
 			{
 				binding    = 0,
 				visibility = { .Fragment },
@@ -126,6 +167,11 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 				binding    = 1,
 				visibility = { .Fragment },
 				sampler    = { type = .Filtering },
+			},
+			{
+				binding    = 2,
+				visibility = { .Vertex, .Fragment },
+				buffer     = { type = .ReadOnlyStorage, hasDynamicOffset = false, minBindingSize = MAX_DRAW_CALLS * size_of(DrawCallMetadata) },
 			},
 		}
 
@@ -154,10 +200,25 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 				targets     = &wgpu.ColorTargetState{
 					format    = .BGRA8Unorm,
 					writeMask = wgpu.ColorWriteMaskFlags_All,
+					    blend     = &wgpu.BlendState{
+						color = wgpu.BlendComponent{
+							srcFactor = .SrcAlpha,
+							dstFactor = .OneMinusSrcAlpha,
+							operation = .Add,
+						},
+						alpha = wgpu.BlendComponent{
+							srcFactor = .One,
+							dstFactor = .OneMinusSrcAlpha,
+							operation = .Add,
+						},
+					},
 				},
 			},
 			primitive = {
 				topology = .TriangleList,
+				stripIndexFormat = .Undefined,
+				frontFace = .CCW,
+				cullMode = .None,
 
 			},
 			multisample = {
@@ -168,12 +229,13 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 
 		offscreen_quad := []Vertex {
 			//      positions               tex coords
-			Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}},
-			Vertex {Vec3 { 1.0,  1.0, 0.0}, Vec2 {1.0, 0.0}},
-			Vertex {Vec3 {-1.0, -1.0, 0.0}, Vec2 {0.0, 1.0}},
-			Vertex {Vec3 {-1.0, -1.0, 0.0}, Vec2 {0.0, 1.0}},
-			Vertex {Vec3 { 1.0,  1.0, 0.0}, Vec2 {1.0, 0.0}},
-			Vertex {Vec3 {-1.0,  1.0, 0.0}, Vec2 {0.0, 0.0}},
+			Vertex {Vec3 { 1.0,  1.0, 0.0}, Vec2 {1.0, 0.0}}, // top-right
+			Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}}, // bottom-right
+			Vertex {Vec3 {-1.0,  1.0, 0.0}, Vec2 {0.0, 0.0}}, // top-left
+
+			Vertex {Vec3 {-1.0,  1.0, 0.0}, Vec2 {0.0, 0.0}}, // top-left
+			Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}}, // bottom-right
+			Vertex {Vec3 {-1.0, -1.0, 0.0}, Vec2 {0.0, 1.0}}, // bottom-left
 		}
 		offscreen_quad_buffer := load_vertex_buffer(offscreen_quad)
 
@@ -195,6 +257,19 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 				instance.buffer_height
 			)
 		}
+
+		instance.camera_position = Vec2{0.0, 0.0}
+		instance.camera_angle = 0.0
+		instance.camera_zoom = 1.0
+
+		instance.projection_matrix = linalg.matrix_ortho3d_f32(
+			0.0, 
+			f32(instance.buffer_width), 
+			0.0, 
+			f32(instance.buffer_height),
+			-1000.0, 
+			1000.0,
+		)
 	}
 }
 
@@ -220,21 +295,6 @@ begin_draw :: proc() {
 		log.panicf("Error: get_current_texture status=%v", instance.surface_texture.status)
 	}
 
-	// instance.surface_texture_view = wgpu.TextureCreateView(instance.surface_texture.texture, nil)
-	// instance.command_encoder = wgpu.DeviceCreateCommandEncoder(instance.device, nil)
-	// instance.render_pass_encoder = wgpu.CommandEncoderBeginRenderPass(
-	// 	instance.command_encoder, &{
-	// 		colorAttachmentCount = 1,
-	// 		colorAttachments = &wgpu.RenderPassColorAttachment{
-	// 			view       = instance.surface_texture_view,
-	// 			loadOp     = .Clear,
-	// 			storeOp    = .Store,
-	// 			depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
-	// 			clearValue = instance.clear_color,
-	// 		},
-	// 	},
-	// )
-
 	instance.command_encoder = wgpu.DeviceCreateCommandEncoder(instance.device, nil)
 	instance.render_pass_encoder = wgpu.CommandEncoderBeginRenderPass(
 		instance.command_encoder, &{
@@ -257,10 +317,48 @@ begin_draw :: proc() {
 	)
 
 	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
+
+	instance.draw_call = 0
 }
 
-draw :: proc() {
-	//wgpu.RenderPassEncoderDraw(instance.render_pass_encoder, vertexCount=3, instanceCount=1, firstVertex=0, firstInstance=0)
+draw :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32) {
+	draw_textured_model(textured_model, position, origin, angle, flip, scale, instance.camera_zoom)
+}
+
+draw_ui :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32) {
+	draw_textured_model(textured_model, position, origin, angle, flip, scale, 1.0)
+}
+
+@(private)
+draw_textured_model :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32, zoom: f32) {
+	RADIAN_MUL: f32 = math.PI / 180.0
+	
+	// Model = T(position) * Rz(angle) * S(scale) * T(-origin)
+    model_matrix := linalg.matrix4_translate_f32(Vec3{position.x, -position.y, 0.0})
+    model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_rotate_f32(angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
+    model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_scale_f32(Vec3{scale, scale, 1.0}))
+    model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_translate_f32(Vec3{-origin.x, -origin.y, 0.0}))
+	
+	// View matrix
+	frame_buffer_half_width := f32(instance.buffer_width) / 2.0
+	frame_buffer_half_height := f32(instance.buffer_height) / 2.0
+	view_matrix := linalg.matrix4_translate_f32(Vec3{instance.camera_position.x + frame_buffer_half_width, instance.camera_position.y + frame_buffer_half_height, 0.0})
+	view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_rotate_f32(instance.camera_angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
+	view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_scale_f32(Vec3{zoom, zoom, 1.0}))
+
+	// MVP
+	mvp_matrix := linalg.matrix_mul(instance.projection_matrix, view_matrix)
+	mvp_matrix = linalg.matrix_mul(mvp_matrix, model_matrix)
+
+	metadata := DrawCallMetadata {
+		mvp = mvp_matrix,
+		color = instance.offscreen_color_override,
+		use_color = 1.0 if instance.use_offscreen_color_override else 0.0,
+		flip_x = 1.0 if flip else 0.0,
+		flip_y = 0.0,
+	}
+
+	render_textured_model(textured_model, &metadata)
 }
 
 end_draw_and_present :: proc() {
@@ -293,17 +391,25 @@ end_draw_and_present :: proc() {
 		},
 	)
 
+	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
+
 	viewport_width, viewport_height := fit_rectangle_in_rectangle(
 		f32(instance.buffer_width), f32(instance.buffer_height),
 		f32(instance.window_width), f32(instance.window_height)
 	)
 
 	set_viewport(u32(viewport_width), u32(viewport_height), instance.window_width, instance.window_height)
-	
-	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
+
+	metadata := DrawCallMetadata {
+		mvp = linalg.MATRIX4F32_IDENTITY,
+		color = instance.screen_color_override,
+		use_color = instance.use_screen_color_override ? 1.0 : 0.0,
+		flip_x = 0.0,
+		flip_y = 0.0,
+	}
 
 	// Render offscreen texture quad to screen
-	render_textured_model(&instance.offscreen_quad)
+	render_textured_model(&instance.offscreen_quad, &metadata)
 
 	// Finish screen rendering
 	wgpu.RenderPassEncoderEnd(instance.render_pass_encoder)
@@ -320,7 +426,15 @@ end_draw_and_present :: proc() {
 }
 
 @(private)
-render_textured_model :: proc(textured_model: ^TexturedModel) {
+render_textured_model :: proc(textured_model: ^TexturedModel, draw_call_metadata: ^DrawCallMetadata) {
+	wgpu.QueueWriteBuffer(
+		instance.queue,
+		instance.storage_buffer,
+		instance.draw_call * size_of(DrawCallMetadata),
+		rawptr(draw_call_metadata),
+		size_of(DrawCallMetadata)
+	)
+	
 	wgpu.RenderPassEncoderSetVertexBuffer(
 		instance.render_pass_encoder, 
 		0, 
@@ -340,8 +454,10 @@ render_textured_model :: proc(textured_model: ^TexturedModel) {
 		vertexCount=textured_model.model.vertex_count, 
 		instanceCount=1, 
 		firstVertex=0, 
-		firstInstance=0
+		firstInstance=u32(instance.draw_call)
 	)
+
+	instance.draw_call += 1
 }
 
 load_vertex_buffer :: proc(vertices: []Vertex) -> Model {
@@ -406,7 +522,7 @@ load_texture_from_png :: proc(png_data: []u8) -> Texture {
 @(private)
 create_texture_from_texture_and_texture_view :: proc(texture: wgpu.Texture, texture_view: wgpu.TextureView, width: u32, height: u32) -> Texture {
 	// Create a bind group for the texture and sampler
-	bind_group_entries := [2]wgpu.BindGroupEntry {
+	bind_group_entries := [3]wgpu.BindGroupEntry {
 		{
 			binding = 0,
 			textureView = texture_view,
@@ -414,11 +530,17 @@ create_texture_from_texture_and_texture_view :: proc(texture: wgpu.Texture, text
 		{
 			binding = 1,
 			sampler = instance.sampler,
+		},
+		{
+			binding = 2,
+			buffer = instance.storage_buffer,
+			offset = 0,
+			size   = MAX_DRAW_CALLS * size_of(DrawCallMetadata),
 		}
 	}
 
 	bind_group := wgpu.DeviceCreateBindGroup(instance.device, &wgpu.BindGroupDescriptor{
-		layout = instance.bind_group_layout, // The layout you created in your pipeline
+		layout = instance.bind_group_layout,
 		entryCount = len(bind_group_entries),
 		entries = &bind_group_entries[0],
 	})
@@ -497,6 +619,64 @@ fit_rectangle_in_rectangle :: proc(inner_width: f32, inner_height: f32, outer_wi
 	}
 }
 
-cleanup :: proc() {
+set_camera_position :: proc(position: Vec2) {
+	instance.camera_position = position
+}
 
+set_camera_angle :: proc(angle: f32) {
+	instance.camera_angle = angle
+}
+
+set_camera_zoom :: proc(zoom: f32) {
+	instance.camera_zoom = zoom
+}
+
+get_camera_position :: proc() -> Vec2 {
+	return instance.camera_position
+}
+
+get_camera_angle :: proc() -> f32 {
+	return instance.camera_angle
+}
+
+get_camera_zoom :: proc() -> f32 {
+	return instance.camera_zoom
+}
+
+set_offscreen_color_override :: proc(color: Vec4) {
+	instance.offscreen_color_override = color
+	instance.use_offscreen_color_override = true
+}
+
+clear_offscreen_color_override :: proc() {
+	instance.use_offscreen_color_override = false
+}
+
+set_screen_color_override :: proc(color: Vec4) {
+	instance.screen_color_override = color
+	instance.use_screen_color_override = true
+}
+
+clear_screen_color_override :: proc() {
+	instance.use_screen_color_override = false
+}
+
+get_framebuffer_width :: proc() -> u32 {
+	return instance.buffer_width
+}
+
+get_framebuffer_height :: proc() -> u32 {
+	return instance.buffer_height
+}
+
+get_window_width :: proc() -> u32 {
+	return instance.window_width
+}
+
+get_window_height :: proc() -> u32 {
+	return instance.window_height
+}
+
+cleanup :: proc() {
+	// TODO: like who cares...
 }

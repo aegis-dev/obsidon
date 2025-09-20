@@ -2,6 +2,7 @@ package obsidon
 
 import "core:strings"
 import "core:log"
+import "core:time"
 
 import "window"
 import "renderer"
@@ -20,14 +21,24 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
     current_scene := scene
     current_scene->on_create()
 
+    delta_time := 0.0
+    last_frame_time := time.now()
+
     for !window.should_close() {
         free_all(context.temp_allocator)
 
         window.poll_events()
 
+        // TODO: 
+        // if input.should_quit()
+
+        time_now := time.now()
+        delta_time = time.duration_seconds(time.diff(time_now, last_frame_time))
+        last_frame_time = time_now
+
         renderer.begin_draw()
 
-        new_scene := current_scene->on_update(0.0)
+        new_scene := current_scene->on_update(f32(delta_time))
         if new_scene != nil {
             validate_scene(scene)
 
@@ -37,7 +48,7 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
             current_scene := new_scene
             current_scene->on_create()
         } else {
-             current_scene->on_draw(0.0)
+             current_scene->on_draw(f32(delta_time))
         }
 
         renderer.end_draw_and_present()
@@ -46,6 +57,54 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
 
 set_clear_color :: proc(r: f64, g: f64, b: f64, a: f64) {
 	renderer.set_clear_color(r, g, b, a)
+}
+
+set_camera_position :: proc(position: Vec2) {
+    renderer.set_camera_position(position)
+}
+
+set_camera_angle :: proc(angle: f32) {
+    renderer.set_camera_angle(angle)
+}
+
+set_camera_zoom :: proc(zoom: f32) {
+    renderer.set_camera_zoom(zoom)
+}
+
+get_camera_position :: proc() -> Vec2 {
+    return renderer.get_camera_position()
+}
+
+get_camera_angle :: proc() -> f32 {
+    return renderer.get_camera_angle()
+}
+
+get_camera_zoom :: proc() -> f32 {
+    return renderer.get_camera_zoom()
+}
+
+get_framebuffer_width :: proc() -> u32 {
+    return renderer.get_framebuffer_width()
+}
+
+get_framebuffer_height :: proc() -> u32 {
+    return renderer.get_framebuffer_height()
+}
+
+get_window_width :: proc() -> u32 {
+    return renderer.get_window_width()
+}
+
+get_window_height :: proc() -> u32 {
+    return renderer.get_window_height()
+}
+
+set_screen_color_override :: proc(color: Vec4) {
+    renderer.set_screen_color_override(color)
+}
+
+clear_screen_color_override :: proc() {
+    renderer.clear_screen_color_override()
 }
 
 @(private)
