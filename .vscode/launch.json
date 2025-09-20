@@ -12,6 +12,18 @@
             "environment": [],
             "console": false,
             "preLaunchTask": "Build Example Debug",
+        },
+        {
+            "name": "Run Example Release",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/example.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "console": false,
+            "preLaunchTask": "Build Example Release",
         }
     ]
 }

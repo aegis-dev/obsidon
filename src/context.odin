@@ -7,12 +7,15 @@ import "core:time"
 import "window"
 import "renderer"
 
+@(private)
+should_quit: bool = false
+
 run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Scene) {
     validate_scene(scene)
 
     name_cstr := strings.unsafe_string_to_cstring(name)
 
-    window_width, window_height := window.init(name_cstr)
+    window_width, window_height := window.init(name_cstr, buffer_width, buffer_height)
     defer window.cleanup()
 
     renderer.init(window.get_window_handle(), window_width, window_height, buffer_width, buffer_height)
@@ -29,8 +32,9 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
 
         window.poll_events()
 
-        // TODO: 
-        // if input.should_quit()
+        if should_quit {
+            break
+        }
 
         time_now := time.now()
         delta_time = time.duration_seconds(time.diff(time_now, last_frame_time))
@@ -53,6 +57,10 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
 
         renderer.end_draw_and_present()
     }
+}
+
+quit_game :: proc() {
+    should_quit = true
 }
 
 set_clear_color :: proc(r: f64, g: f64, b: f64, a: f64) {

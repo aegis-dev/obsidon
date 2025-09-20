@@ -115,7 +115,7 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 			format      = .BGRA8Unorm,
 			width       = instance.window_width,
 			height      = instance.window_height,
-			presentMode = .Fifo,
+			presentMode = .Immediate,
 			alphaMode   = .Opaque,
 		}
 		wgpu.SurfaceConfigure(instance.surface, &instance.config)
@@ -334,7 +334,7 @@ draw_textured_model :: proc(textured_model: ^TexturedModel, position: Vec2, orig
 	RADIAN_MUL: f32 = math.PI / 180.0
 	
 	// Model = T(position) * Rz(angle) * S(scale) * T(-origin)
-    model_matrix := linalg.matrix4_translate_f32(Vec3{position.x, -position.y, 0.0})
+    model_matrix := linalg.matrix4_translate_f32(Vec3{-position.x, position.y, 0.0})
     model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_rotate_f32(angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
     model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_scale_f32(Vec3{scale, scale, 1.0}))
     model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_translate_f32(Vec3{-origin.x, -origin.y, 0.0}))

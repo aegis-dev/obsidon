@@ -35,9 +35,24 @@ my_scene_create :: proc(s: ^obsidon.Scene) {
 my_scene_update :: proc(s: ^obsidon.Scene, dt: f32) -> ^obsidon.Scene {
     my_scene := cast(^MyScene)s
 
+    if obsidon.is_key_pressed(obsidon.Key.KEY_ESCAPE) {
+        obsidon.quit_game()
+        return nil
+    }
+
+    if obsidon.is_key_down(obsidon.Key.KEY_D) {
+        my_scene.position.x += 50 * dt
+    } else if obsidon.is_key_down(obsidon.Key.KEY_A) {
+        my_scene.position.x -= 50 * dt 
+    }
+
+    if obsidon.is_key_pressed(obsidon.Key.KEY_SPACE) {
+        my_scene.position.y += 50
+    }
+
     // my_scene.position.x += 50 * dt
-    my_scene.position.y += 20 * dt
-    my_scene.angle += 50 * dt
+    // my_scene.position.y += 20 * dt
+    my_scene.angle += 100 * dt
 
     return nil
 }
@@ -45,13 +60,14 @@ my_scene_update :: proc(s: ^obsidon.Scene, dt: f32) -> ^obsidon.Scene {
 my_scene_draw :: proc(s: ^obsidon.Scene, dt: f32) {
     my_scene := cast(^MyScene)s
 
-    obsidon.sprite_draw(&my_scene.kekw_sprite, my_scene.position, my_scene.origin, my_scene.angle, false, 1.0)
+    obsidon.sprite_draw(&my_scene.kekw_sprite, my_scene.position, my_scene.origin, my_scene.angle, true, 1.0)
+
+    obsidon.sprite_draw(&my_scene.kekw_sprite, obsidon.get_mouse_position(), my_scene.origin, 0.0, true, 1.0)
 }
 
 my_scene_destroy :: proc(s: ^obsidon.Scene) {
     my_scene := cast(^MyScene)s
     // custom logic here
-    log.info("destroy")
 }
 
 create_scene :: proc() -> ^MyScene {

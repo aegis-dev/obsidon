@@ -21,7 +21,7 @@ def main():
     exe_extension = ".exe" if platform.system() == "Windows" else  ""
     exe_name = os.path.basename(source_dir) + exe_extension
     
-    subprocess.run(["odin", "build", source_dir, "-out:" + os.path.join(bin_dir, exe_name)] + ["-debug" if args.debug else "-release"], check=True)
+    subprocess.run(["odin", "build", source_dir, "-out:" + os.path.join(bin_dir, exe_name)] + ["-debug" if args.debug else ""], check=True)
 
 if __name__ == "__main__":
    main()
