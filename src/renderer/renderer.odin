@@ -669,14 +669,6 @@ get_framebuffer_height :: proc() -> u32 {
 	return instance.buffer_height
 }
 
-get_window_width :: proc() -> u32 {
-	return instance.window_width
-}
-
-get_window_height :: proc() -> u32 {
-	return instance.window_height
-}
-
 cleanup :: proc() {
 	// TODO: like who cares...
 }

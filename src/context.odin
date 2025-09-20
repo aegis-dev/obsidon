@@ -67,28 +67,12 @@ set_clear_color :: proc(r: f64, g: f64, b: f64, a: f64) {
 	renderer.set_clear_color(r, g, b, a)
 }
 
-set_camera_position :: proc(position: Vec2) {
-    renderer.set_camera_position(position)
+get_window_width :: proc() -> u32 {
+    return window.get_window_width()
 }
 
-set_camera_angle :: proc(angle: f32) {
-    renderer.set_camera_angle(angle)
-}
-
-set_camera_zoom :: proc(zoom: f32) {
-    renderer.set_camera_zoom(zoom)
-}
-
-get_camera_position :: proc() -> Vec2 {
-    return renderer.get_camera_position()
-}
-
-get_camera_angle :: proc() -> f32 {
-    return renderer.get_camera_angle()
-}
-
-get_camera_zoom :: proc() -> f32 {
-    return renderer.get_camera_zoom()
+get_window_height :: proc() -> u32 {
+    return window.get_window_height()
 }
 
 get_framebuffer_width :: proc() -> u32 {
@@ -97,14 +81,6 @@ get_framebuffer_width :: proc() -> u32 {
 
 get_framebuffer_height :: proc() -> u32 {
     return renderer.get_framebuffer_height()
-}
-
-get_window_width :: proc() -> u32 {
-    return renderer.get_window_width()
-}
-
-get_window_height :: proc() -> u32 {
-    return renderer.get_window_height()
 }
 
 set_screen_color_override :: proc(color: Vec4) {

@@ -43,27 +43,6 @@ get_sprite_quad :: proc(width: u32, height: u32) -> [6]renderer.Vertex {
 	width  := f32(width)
 	height := f32(height)
 
-	// vertices := [6]renderer.Vertex {
-	// 	//               positions                  tex coords
-	// 	renderer.Vertex {Vec3 {width, 0.0,    0.0}, Vec2 {1.0, 1.0}},
-	// 	renderer.Vertex {Vec3 {width, height, 0.0}, Vec2 {1.0, 0.0}},
-	// 	renderer.Vertex {Vec3 {0.0,   0.0,    0.0}, Vec2 {0.0, 1.0}},
-	// 	renderer.Vertex {Vec3 {0.0,   0.0,    0.0}, Vec2 {0.0, 1.0}},
-	// 	renderer.Vertex {Vec3 {width, height, 0.0}, Vec2 {1.0, 0.0}},
-	// 	renderer.Vertex {Vec3 {0.0,   height, 0.0}, Vec2 {0.0, 0.0}},
-	// }
-
-    	// 	offscreen_quad := []Vertex {
-		// 	//      positions               tex coords
-		// 	Vertex {Vec3 { 1.0,  1.0, 0.0}, Vec2 {1.0, 0.0}}, // top-right
-		// 	Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}}, // bottom-right
-		// 	Vertex {Vec3 {-1.0,  1.0, 0.0}, Vec2 {0.0, 0.0}}, // top-left
-
-		// 	Vertex {Vec3 {-1.0,  1.0, 0.0}, Vec2 {0.0, 0.0}}, // top-left
-		// 	Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}}, // bottom-right
-		// 	Vertex {Vec3 {-1.0, -1.0, 0.0}, Vec2 {0.0, 1.0}}, // bottom-left
-		// }
-
     vertices := [6]renderer.Vertex {
 		//               positions                  tex coords
 		renderer.Vertex {Vec3 {width, height, 0.0}, Vec2 {1.0, 0.0}},
