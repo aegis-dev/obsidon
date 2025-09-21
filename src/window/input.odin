@@ -4,12 +4,20 @@ import "core:c"
 
 import "vendor:glfw"
 
+get_key_state :: proc(key: Key) -> State {
+    return instance.cur_keys[key]
+}
+
 is_key_down :: proc(key: Key) -> bool {
     return instance.cur_keys[key] == .Down
 }
 
 is_key_pressed :: proc(key: Key) -> bool {
     return instance.cur_keys[key] == .Down && instance.prev_keys[key] == .Up
+}
+
+get_button_state :: proc(button: Button) -> State {
+    return instance.cur_buttons[button]
 }
 
 is_button_down :: proc(button: Button) -> bool {

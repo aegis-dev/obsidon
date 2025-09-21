@@ -6,10 +6,16 @@ import "core:time"
 
 import "window"
 import "renderer"
+import "audio"
 
 @(private)
 should_quit: bool = false
 
+@(private)
+delta_time: f32 = 0.0
+
+// The method takes over the scene memory management.
+// If the on_update function returns a new scene, the current scene will be destroyed and freed
 run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Scene) {
     validate_scene(scene)
 
@@ -21,10 +27,13 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
     renderer.init(window.get_window_handle(), window_width, window_height, buffer_width, buffer_height)
     defer renderer.cleanup()
 
+    audio.init()
+    defer audio.cleanup()
+
     current_scene := scene
     current_scene->on_create()
 
-    delta_time := 0.0
+    delta_time = 0.0
     last_frame_time := time.now()
 
     for !window.should_close() {
@@ -37,14 +46,14 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
         }
 
         time_now := time.now()
-        delta_time = time.duration_seconds(time.diff(last_frame_time, time_now))
+        delta_time = f32(time.duration_seconds(time.diff(last_frame_time, time_now)))
         last_frame_time = time_now
 
         renderer.begin_draw()
 
-        new_scene := current_scene->on_update(f32(delta_time))
+        new_scene := current_scene->on_update()
         if new_scene != nil {
-            validate_scene(scene)
+            validate_scene(new_scene)
 
             current_scene->on_destroy()
             free(current_scene)
@@ -52,7 +61,7 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
             current_scene := new_scene
             current_scene->on_create()
         } else {
-             current_scene->on_draw(f32(delta_time))
+             current_scene->on_draw()
         }
 
         renderer.end_draw_and_present()
@@ -61,6 +70,10 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
 
 quit_game :: proc() {
     should_quit = true
+}
+
+get_delta_time :: proc() -> f32 {
+    return delta_time
 }
 
 set_clear_color :: proc(r: f64, g: f64, b: f64, a: f64) {
