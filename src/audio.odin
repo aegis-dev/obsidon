@@ -28,3 +28,8 @@ sound_set_volume :: proc(sound: ^Sound, volume: f32) {
 sound_destroy :: proc(sound: ^Sound) {
     audio.sound_destroy(sound)
 }
+
+// Temporary workaround to play a sound while the bug is not fixed
+sound_play_immediate :: proc(file_path: string) {
+    audio.sound_play_immediate(file_path)
+}

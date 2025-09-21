@@ -20,7 +20,6 @@ Button :: obsidon.Button
 baldman_png: []u8 = #load("assets/baldman.png");
 kekw_png: []u8 = #load("assets/kekw.png");
 font_bytes: []u8 = #load("assets/font.otf");
-// fart_bytes: []u8 = #load("assets/fart.mp3");
 
 MyScene :: struct {
     using scene: Scene,
@@ -81,6 +80,7 @@ my_scene_update :: proc(s: ^Scene) -> ^Scene {
     if obsidon.is_key_pressed(Key.KEY_SPACE) {
         my_scene.flip = !my_scene.flip
         // obsidon.sound_play(&my_scene.fart)
+        obsidon.sound_play_immediate("C:\\Users\\elile\\Desktop\\Git\\obsidon\\example\\assets\\fart.wav")
     }
 
     my_scene.angle += 50 * dt

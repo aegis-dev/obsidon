@@ -15,7 +15,7 @@ sound_load_from_file :: proc(file_path: string) -> Sound {
     result := miniaudio.sound_init_from_file(
         &instance.engine, 
         cstring(raw_data(file_path)), 
-        { .DECODE, }, 
+        { .STREAM, }, 
         nil, 
         nil, 
         &sound.sound
@@ -56,6 +56,20 @@ sound_set_volume :: proc(sound: ^Sound, volume: f32) {
     miniaudio.sound_set_volume(&sound.sound, volume)
 }
 
+// Set volume (0.0 to 1.0)
+audio_engine_set_volume :: proc(volume: f32) {
+    miniaudio.engine_set_volume(&instance.engine, volume)
+}
+
 sound_destroy :: proc(sound: ^Sound) {
     miniaudio.sound_uninit(&sound.sound)
+}
+
+sound_play_immediate :: proc(file_path: string) {
+    miniaudio.engine_play_sound(
+        &instance.engine, 
+        cstring(raw_data(file_path)), 
+        nil
+    )
+
 }
