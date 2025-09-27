@@ -38,52 +38,52 @@ transform_animation_init :: proc(transform: ^Transform) -> TransformAnimation {
 }
 
 transform_animation_start :: proc(transform_animation: ^TransformAnimation) {
-    transform_animation_reset(transform_animation);
-    transform_animation.running = true;
+    transform_animation_reset(transform_animation)
+    transform_animation.running = true
 }
 
 transform_animation_stop :: proc(transform_animation: ^TransformAnimation) {
-    transform_animation.running = false;
+    transform_animation.running = false
 }
 
 transform_animation_resume :: proc(transform_animation: ^TransformAnimation) {
-    transform_animation.running = true;
+    transform_animation.running = true
 }
 
 transform_animation_restart :: proc(transform_animation: ^TransformAnimation) {
-    transform_animation_reset(transform_animation);
+    transform_animation_reset(transform_animation)
 }
 
 transform_animation_reset :: proc(transform_animation: ^TransformAnimation) {
-    transform_animation.current_step = 0;
+    transform_animation.current_step = 0
     for step in transform_animation.steps {
-        step.reset(transform_animation);
+        step.reset(transform_animation)
     }
 }
 
 transform_animation_update :: proc(transform_animation: ^TransformAnimation, delta_time: f32) {
     if (!transform_animation.running) {
-        return;
+        return
     }
 
     if (transform_animation.current_step >= len(transform_animation.steps)) {
-        transform_animation.running = false;
-        return;
+        transform_animation.running = false
+        return
     }
 
-    current_step := &transform_animation.steps[transform_animation.current_step];
+    current_step := &transform_animation.steps[transform_animation.current_step]
 
     if (current_step.update(transform_animation, transform_animation.transform, delta_time)) {
-        transform_animation.current_step += 1;
+        transform_animation.current_step += 1
     }
 }
 
 transform_animation_is_running :: proc(transform_animation: ^TransformAnimation) -> bool {
-    return transform_animation.running;
+    return transform_animation.running
 }
 
 transform_animation_add_step :: proc(transform_animation: ^TransformAnimation, step: TransformAnimationStep) {
-    append(&transform_animation.steps, step);
+    append(&transform_animation.steps, step)
 }
 
 @(private)
@@ -99,18 +99,18 @@ transform_animation_add_do_nothing_step :: proc(transform_animation: ^TransformA
         elapsed_time = 0.0,
         step = TransformAnimationStep{
             update = proc(animation: ^TransformAnimation, transform: ^Transform, delta_time: f32) -> bool {
-                step := cast(^DoNothingStep)&animation.steps[animation.current_step];
-                step.elapsed_time += delta_time;
-                return step.elapsed_time >= step.duration;
+                step := cast(^DoNothingStep)&animation.steps[animation.current_step]
+                step.elapsed_time += delta_time
+                return step.elapsed_time >= step.duration
             },
             reset = proc(animation: ^TransformAnimation) {
-                step := cast(^DoNothingStep)&animation.steps[animation.current_step];
-                step.elapsed_time = 0.0;
+                step := cast(^DoNothingStep)&animation.steps[animation.current_step]
+                step.elapsed_time = 0.0
             },
         },
-    };
+    }
 
-    transform_animation_add_step(transform_animation, step);
+    transform_animation_add_step(transform_animation, step)
 }
 
 @(private)
@@ -124,17 +124,17 @@ transform_animation_add_init_transform_step :: proc(transform_animation: ^Transf
         target_transform = target_transform,
         step = TransformAnimationStep{
             update = proc(animation: ^TransformAnimation, transform: ^Transform, delta_time: f32) -> bool {
-                step := cast(^TransformInitStep)&animation.steps[animation.current_step];
-                transform^ = step.target_transform;
-                return true;
+                step := cast(^TransformInitStep)&animation.steps[animation.current_step]
+                transform^ = step.target_transform
+                return true
             },
             reset = proc(animation: ^TransformAnimation) {
                 // Noithing to reset
             },
         },
-    };
+    }
 
-    transform_animation_add_step(transform_animation, step);
+    transform_animation_add_step(transform_animation, step)
 }
 
 @(private)
@@ -152,26 +152,26 @@ transform_animation_add_transform_into_step :: proc(transform_animation: ^Transf
         elapsed_time = 0.0,
         step = TransformAnimationStep{
             update = proc(animation: ^TransformAnimation, transform: ^Transform, delta_time: f32) -> bool {
-                step := cast(^TransformIntoStep)&animation.steps[animation.current_step];
+                step := cast(^TransformIntoStep)&animation.steps[animation.current_step]
                
-                time_left := step.duration - step.elapsed_time;
-                completed := delta_time / time_left;
+                time_left := step.duration - step.elapsed_time
+                completed := delta_time / time_left
 
-                transform.position += (step.target_transform.position - transform.position) * completed;
-                transform.angle += (step.target_transform.angle - transform.angle) * completed;
-                transform.scale += (step.target_transform.scale - transform.scale) * completed;
+                transform.position += (step.target_transform.position - transform.position) * completed
+                transform.angle += (step.target_transform.angle - transform.angle) * completed
+                transform.scale += (step.target_transform.scale - transform.scale) * completed
 
-                step.elapsed_time += delta_time;
-                return step.elapsed_time >= step.duration;
+                step.elapsed_time += delta_time
+                return step.elapsed_time >= step.duration
             },
             reset = proc(animation: ^TransformAnimation) {
-                step := cast(^TransformIntoStep)&animation.steps[animation.current_step];
-                step.elapsed_time = 0.0;
+                step := cast(^TransformIntoStep)&animation.steps[animation.current_step]
+                step.elapsed_time = 0.0
             },
         },
-    };
+    }
 
-    transform_animation_add_step(transform_animation, step);
+    transform_animation_add_step(transform_animation, step)
 }
 
 @(private)
@@ -183,16 +183,16 @@ transform_animation_add_animation_restart_step :: proc(transform_animation: ^Tra
     step := AnimationRestartStep{
         step = TransformAnimationStep{
             update = proc(animation: ^TransformAnimation, transform: ^Transform, delta_time: f32) -> bool {
-                animation.current_step = 0;
+                animation.current_step = 0
 
                 // Returning false to avoid step increment
-                return false;
+                return false
             },
             reset = proc(animation: ^TransformAnimation) {
                 // Nothing to reset
             },
         },
-    };
+    }
 
-    transform_animation_add_step(transform_animation, step);
+    transform_animation_add_step(transform_animation, step)
 }

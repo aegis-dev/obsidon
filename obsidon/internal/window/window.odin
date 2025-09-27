@@ -57,11 +57,11 @@ init :: proc(name: cstring, framebuffer_width: u32, framebuffer_height: u32) -> 
         log.panic("glfw: No primary monitor")
     }
 
-    mode := glfw.GetVideoMode(monitor);
-    width  := mode.width;
-    height := mode.height;
+    mode := glfw.GetVideoMode(monitor)
+    width  := mode.width
+    height := mode.height
 
-    mx, my := glfw.GetMonitorPos(monitor);
+    mx, my := glfw.GetMonitorPos(monitor)
 
     glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
     glfw.WindowHint(glfw.DECORATED, glfw.FALSE)
@@ -74,7 +74,7 @@ init :: proc(name: cstring, framebuffer_width: u32, framebuffer_height: u32) -> 
         log.panic("glfw: failed to create a window")
     }
 
-    glfw.SetWindowPos(instance.window, mx, my);
+    glfw.SetWindowPos(instance.window, mx, my)
     glfw.SetInputMode(instance.window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
 
     instance.window_width = u32(width)

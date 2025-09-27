@@ -50,7 +50,7 @@ font_load :: proc(ttf_data: []u8, font_size: f32) -> Font {
         glyphs = make(map[rune]Glyph),
     }
 
-    characters := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,.!?;:\"'\\|/+=-_)(}{&^%$#@~<>"
+    characters := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,.!?:\"'\\|/+=-_)(}{&^%$#@~<>"
 
     for char in characters {
         font.glyphs[char] = render_glyph(&font_info, char, scale)

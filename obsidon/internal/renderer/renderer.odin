@@ -103,7 +103,7 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 		}
 		instance.adapter = adapter
 
-		required_features := wgpu.FeatureName.VertexWritableStorage; // or VERTEX_READ_STORAGE if available
+		required_features := wgpu.FeatureName.VertexWritableStorage // or VERTEX_READ_STORAGE if available
 
 		wgpu.AdapterRequestDevice(adapter, 
 			&wgpu.DeviceDescriptor{
@@ -281,6 +281,7 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 			f32(instance.buffer_height),
 			-1000.0, 
 			1000.0,
+			flip_z_axis=false
 		)
 	}
 }
@@ -427,11 +428,11 @@ create_mvp_matrix :: proc(position: Vec2, origin: Vec2, angle: f32, scale: f32, 
 	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_rotate_f32(angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
 	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_scale_f32(Vec3{scale, scale, 1.0}))
 	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_translate_f32(Vec3{-origin.x, -origin.y, 0.0}))
-	
+
 	// View matrix
 	frame_buffer_half_width := f32(instance.buffer_width) / 2.0
 	frame_buffer_half_height := f32(instance.buffer_height) / 2.0
-	view_matrix := linalg.matrix4_translate_f32(Vec3{instance.camera_position.x + frame_buffer_half_width, instance.camera_position.y + frame_buffer_half_height, 0.0})
+	view_matrix := linalg.matrix4_translate_f32(Vec3{-instance.camera_position.x + frame_buffer_half_width, -instance.camera_position.y + frame_buffer_half_height, 0.0})
 	view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_rotate_f32(instance.camera_angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
 	view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_scale_f32(Vec3{zoom, zoom, 1.0}))
 
