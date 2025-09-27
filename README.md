@@ -210,11 +210,26 @@ Check the `example/` directory for a complete working example that demonstrates:
 
 ## Contributing
 
+### For New Features
+Before implementing new features, **please create a GitHub Discussion** to ensure your contribution aligns with Obsidon's philosophy of simplicity and focused scope. We want to make sure any additions fit within our "less is more" approach.
+
+1. Create a GitHub Discussion describing your proposed feature
+2. Wait for maintainer feedback and approval
+3. Fork the repository
+4. Create a feature branch
+5. Implement the approved feature
+6. Submit a pull request referencing the discussion
+
+### For Bug Fixes and Small Improvements
+No prior discussion needed - feel free to directly:
+
 1. Fork the repository
-2. Create a feature branch
+2. Create a branch for your fix
 3. Make your changes
 4. Add tests if applicable
-5. Submit a pull request
+5. Submit a pull request with a clear description
+
+We appreciate all contributions that help make Obsidon better while staying true to its core philosophy!
 
 ## License
 
