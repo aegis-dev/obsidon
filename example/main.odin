@@ -5,7 +5,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:log"
 
-import obsidon "../src"
+import obsidon "../obsidon"
 
 // Aliases for convenience
 Vec2 :: obsidon.Vec2
