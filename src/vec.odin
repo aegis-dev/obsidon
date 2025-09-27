@@ -17,7 +17,7 @@ package obsidon
 
 import "core:math"
 
-import "renderer"
+import "internal/renderer"
 
 Vec2 :: renderer.Vec2
 

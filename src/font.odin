@@ -20,7 +20,7 @@ import "core:c"
 
 import "vendor:stb/truetype"
 
-import "renderer"
+import "internal/renderer"
 
 @(private)
 Glyph :: struct {

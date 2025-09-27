@@ -15,7 +15,7 @@
 
 package obsidon
 
-import "renderer"
+import "internal/renderer"
 
 set_camera_position :: proc(position: Vec2) {
     renderer.set_camera_position(position)

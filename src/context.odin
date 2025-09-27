@@ -19,9 +19,9 @@ import "core:strings"
 import "core:log"
 import "core:time"
 
-import "window"
-import "renderer"
-import "audio"
+import "internal/window"
+import "internal/renderer"
+import "internal/audio"
 
 @(private)
 should_quit: bool = false

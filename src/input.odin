@@ -15,8 +15,8 @@
 
 package obsidon
 
-import "window"
-import "renderer"
+import "internal/window"
+import "internal/renderer"
 
 Key :: window.Key
 Button :: window.Button

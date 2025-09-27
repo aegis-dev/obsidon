@@ -15,7 +15,7 @@
 
 package obsidon
 
-import "renderer"
+import "internal/renderer"
 
 Sprite :: struct {
     width: u32,

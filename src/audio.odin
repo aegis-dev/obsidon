@@ -15,7 +15,7 @@
 
 package obsidon
 
-import "audio"
+import "internal/audio"
 
 Sound :: audio.Sound
 
