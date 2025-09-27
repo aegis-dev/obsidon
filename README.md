@@ -54,25 +54,12 @@ If you need features beyond Obsidon's scope, you're encouraged to extend it your
 
 ## Quick Start
 
-### 1. Clone the Repository
+### 1. Add Repository as a Submodule
 ```bash
-git clone https://github.com/aegis-dev/obsidon.git
-cd obsidon
+git submodule add https://github.com/aegis-dev/obsidon.git
 ```
 
-### 2. Build and Run the Example
-```bash
-# Build the example
-python build.py --source-dir example --output-dir bin
-
-# Run the example (Windows)
-./bin/example.exe
-
-# Run the example (Linux/macOS)
-./bin/example
-```
-
-### 3. Create Your Own Project
+### 2. Create Your Own Project
 
 Create a basic main file:
 
@@ -118,6 +105,8 @@ scene_update :: proc(s: ^Scene) -> ^Scene {
     
     if obsidon.is_key_pressed(.KEY_ESCAPE) do obsidon.quit_game()
     
+    // Return a pointer to scene if you want to change the scene.
+    // Current scene will be freed.
     return nil
 }
 
@@ -152,79 +141,16 @@ main :: proc() {
 }
 ```
 
-## API Overview
+### 3. Build and Run
+```bash
+# Build the example
+python obsidon/build.py --source-dir .example/ --output-dir bin
 
-### Core Functions
-```odin
-// Game lifecycle
-// width/height define the internal rendering resolution (e.g., 128x128 for retro games)
-// The engine automatically scales to the actual window size for pixel perfect graphics
-run_game(title: string, width: int, height: int, initial_scene: ^Scene)
-quit_game()
-get_delta_time() -> f32
+# Run the example (Windows)
+./bin/example.exe
 
-// Scene management  
-set_scene(scene: ^Scene)
-
-// Rendering
-set_clear_color(r, g, b, a: f32)
-```
-
-### Pixel Perfect Rendering
-
-Obsidon supports pixel perfect graphics by allowing you to specify any internal resolution that gets automatically scaled to the window size:
-
-```odin
-// Retro 8-bit style (128x128 internal, scales to window)
-obsidon.run_game("Retro Game", 128, 128, scene)
-
-// Classic arcade resolution (320x240 internal, scales to window)  
-obsidon.run_game("Arcade Game", 320, 240, scene)
-
-// Game Boy style (160x144 internal, scales to window)
-obsidon.run_game("Handheld Game", 160, 144, scene)
-
-// Modern pixel art (480x270 internal, scales to window)
-obsidon.run_game("Pixel Art Game", 480, 270, scene)
-```
-
-The engine maintains crisp pixel scaling regardless of the actual window size, making it perfect for retro-style games and pixel art.
-
-### Sprite System
-```odin
-// Loading and management
-sprite_load(data: []u8) -> Sprite
-sprite_destroy(sprite: ^Sprite)
-
-// Drawing
-sprite_draw(sprite: ^Sprite, position: Vec2, origin: Vec2, 
-           rotation: f32, flip_x: bool, scale: f32)
-```
-
-### Input System
-```odin
-// Keyboard
-is_key_down(key: Key) -> bool
-is_key_pressed(key: Key) -> bool
-is_key_released(key: Key) -> bool
-
-// Mouse
-get_mouse_position() -> Vec2
-is_mouse_button_down(button: Button) -> bool
-```
-
-### Audio System
-```odin
-sound_load_from_file(path: string) -> Sound
-sound_play(sound: ^Sound)
-sound_play_immediate(path: string)
-```
-
-### Text Rendering
-```odin
-font_load(data: []u8, size: f32) -> Font
-font_destroy(font: ^Font)
-text_draw(font: ^Font, text: string, position: Vec2, scale: f32, color: Vec4)
+# Run the example (Linux/macOS)
+./bin/example
 ```
 
 ## Building
@@ -263,7 +189,7 @@ odin build your_project -out:bin/your_game.exe -opt:3
 odin build your_project -out:bin/your_game.exe -opt:3 -no-bounds-check
 ```
 
-## Project Structure
+## Project Structure suggestion
 
 ```
 your_project/
