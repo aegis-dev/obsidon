@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Example",
+            "name": "Win Debug",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/bin/example.exe",
@@ -14,7 +14,7 @@
             "preLaunchTask": "Build Example Debug",
         },
         {
-            "name": "Run Example Release",
+            "name": "Win Release",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/bin/example.exe",
@@ -23,6 +23,28 @@
             "cwd": "${workspaceFolder}",
             "environment": [],
             "console": false,
+            "preLaunchTask": "Build Example Release",
+        },
+        {
+            "name": "Linux Debug",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/example",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "preLaunchTask": "Build Example Debug",
+        },
+        {
+            "name": "Linux Release",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/example",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
             "preLaunchTask": "Build Example Release",
         }
     ]
