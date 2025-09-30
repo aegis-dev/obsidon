@@ -121,13 +121,19 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 		}
 		instance.device = device 
 
+		when ODIN_OS == .Linux {
+			mode := wgpu.PresentMode.Mailbox
+		} else {
+			mode := wgpu.PresentMode.Immediate
+		}
+
 		instance.config = wgpu.SurfaceConfiguration {
 			device      = instance.device,
 			usage       = { .RenderAttachment },
 			format      = .BGRA8Unorm,
 			width       = instance.window_width,
 			height      = instance.window_height,
-			presentMode = .Immediate,
+			presentMode = mode,
 			alphaMode   = .Opaque,
 		}
 		wgpu.SurfaceConfigure(instance.surface, &instance.config)

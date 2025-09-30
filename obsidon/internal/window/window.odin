@@ -41,7 +41,6 @@ instance: struct {
     cur_buttons:  [BUTTON_COUNT]State,
 
     mouse_position: Vec2,
-    last_mouse_position: Vec2,
     mouse_sensitivity: Vec2,
 }
 
@@ -65,14 +64,32 @@ init :: proc(name: cstring, framebuffer_width: u32, framebuffer_height: u32) -> 
 
     glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
     glfw.WindowHint(glfw.DECORATED, glfw.FALSE)
-    glfw.WindowHint(glfw.RESIZABLE, glfw.FALSE)
+    glfw.WindowHint(glfw.RESIZABLE, glfw.TRUE)
     glfw.WindowHint(glfw.FOCUSED, glfw.TRUE)
     glfw.WindowHint(glfw.AUTO_ICONIFY, glfw.FALSE)
     
-    instance.window = glfw.CreateWindow(c.int(width), c.int(height), "name", nil, nil)
+    when ODIN_OS == .Windows {
+        instance.window = glfw.CreateWindow(c.int(width), c.int(height), "name", nil, nil)
+    } else {
+        instance.window = glfw.CreateWindow(c.int(width), c.int(height), "name", monitor, nil)
+    }
+
     if instance.window == nil {
         log.panic("glfw: failed to create a window")
     }
+
+    // Window content scaling (for high-DPI displays)
+    // We need to do it after window creation because monitor scale does not
+    // report correct values
+    width_scale, height_scale := glfw.GetWindowContentScale(instance.window)
+    width  = c.int(f32(width) / width_scale)
+    height = c.int(f32(height) / height_scale)
+
+    // Now resize the window to match the scaling
+    glfw.SetWindowSize(instance.window, width, height)
+
+    // Set initial mouse position to the center of the window
+    glfw.SetCursorPos(instance.window, f64(width) / 2.0, f64(height) / 2.0)
 
     glfw.SetWindowPos(instance.window, mx, my)
     glfw.SetInputMode(instance.window, glfw.CURSOR, glfw.CURSOR_HIDDEN)

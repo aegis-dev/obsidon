@@ -76,14 +76,9 @@ refresh_mouse_buttons :: proc() {
 @(private)
 refresh_mouse_position :: proc() {
     x, y := glfw.GetCursorPos(instance.window)
-    mx := f32(x) - f32(instance.window_width) / 2.0
-    my := f32(y) - f32(instance.window_height) / 2.0
-    delta := Vec2{mx, my} - instance.last_mouse_position
+    position := Vec2{f32(x), f32(y)} - Vec2{f32(instance.window_width / 2), f32(instance.window_height / 2)}
+    normalized := position * instance.mouse_sensitivity
 
-    instance.last_mouse_position = Vec2{f32(mx), f32(my)}
-
-    normalized := delta * instance.mouse_sensitivity
-    
-    instance.mouse_position.x += normalized.x
-    instance.mouse_position.y -= normalized.y
+    instance.mouse_position.x = normalized.x
+    instance.mouse_position.y = -normalized.y
 }
