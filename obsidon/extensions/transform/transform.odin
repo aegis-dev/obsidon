@@ -13,9 +13,9 @@
 // limitations under the License.
 //
 
-package extensions
+package transform
 
-import obsidon ".."
+import obsidon "../.."
 
 Transform :: struct {
     position: obsidon.Vec2,

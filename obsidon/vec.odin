@@ -70,3 +70,7 @@ vec2_angle :: proc(v: Vec2) -> f32 {
 vec2_normalize :: proc(v: Vec2) -> Vec2 {
     return linalg.normalize(v)
 }
+
+vec2_length :: proc(v: Vec2) -> f32 {
+    return math.sqrt(v.x * v.x + v.y * v.y)
+}

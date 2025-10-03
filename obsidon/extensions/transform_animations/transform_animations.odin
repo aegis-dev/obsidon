@@ -15,6 +15,10 @@
 
 package extensions
 
+import transform "../transform"
+
+Transform :: transform.Transform
+
 @(private)
 TransformAnimationStep :: struct {
     update: proc(animation: ^TransformAnimation, transform: ^Transform, delta_time: f32) -> bool,
