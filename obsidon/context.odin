@@ -27,7 +27,7 @@ import "internal/audio"
 should_quit: bool = false
 
 @(private)
-delta_time: f32 = 0.0
+delta_time: f64 = 0.0
 
 // The method takes over the scene memory management.
 // If the on_update function returns a new scene, the current scene will be destroyed and freed
@@ -61,7 +61,7 @@ run_game :: proc(name: string, buffer_width: u32, buffer_height: u32, scene: ^Sc
         }
 
         time_now := time.now()
-        delta_time = f32(time.duration_seconds(time.diff(last_frame_time, time_now)))
+        delta_time = time.duration_seconds(time.diff(last_frame_time, time_now))
         last_frame_time = time_now
 
         renderer.begin_draw()
@@ -87,7 +87,7 @@ quit_game :: proc() {
     should_quit = true
 }
 
-get_delta_time :: proc() -> f32 {
+get_delta_time :: proc() -> f64 {
     return delta_time
 }
 

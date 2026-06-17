@@ -69,8 +69,8 @@ instance: struct {
 	offscreen_quad: 	     TexturedModel,
 
 	clear_color:       	[4]f64,
-	camera_position:   	Vec2,
-	camera_angle:      	f32,
+	camera_position:   	WorldVec2,
+	camera_angle:      	f64,
 	camera_zoom:	   	f32,
 
 	screen_color_override: 	   		Vec4,
@@ -276,7 +276,7 @@ init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, b
 			)
 		}
 
-		instance.camera_position = Vec2{0.0, 0.0}
+		instance.camera_position = WorldVec2{0.0, 0.0}
 		instance.camera_angle = 0.0
 		instance.camera_zoom = 1.0
 
@@ -340,7 +340,7 @@ begin_draw :: proc() {
 	instance.draw_call = 0
 }
 
-draw :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32) {
+draw :: proc(textured_model: ^TexturedModel, position: WorldVec2, origin: WorldVec2, angle: f64, flip: bool, scale: f32) {
 	draw_textured_model(
 		textured_model, 
 		position, 
@@ -350,11 +350,12 @@ draw :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle
 		scale, 
 		instance.camera_zoom,
 		Vec4{},
-		false
+		false,
+		true
 	)
 }
 
-draw_colored :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32, color: Vec4) {
+draw_colored :: proc(textured_model: ^TexturedModel, position: WorldVec2, origin: WorldVec2, angle: f64, flip: bool, scale: f32, color: Vec4) {
 	draw_textured_model(
 		textured_model, 
 		position, 
@@ -364,12 +365,13 @@ draw_colored :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec
 		scale, 
 		instance.camera_zoom,
 		color,
+		true,
 		true
 	)
 }
 
 
-draw_ui :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32) {
+draw_ui :: proc(textured_model: ^TexturedModel, position: WorldVec2, origin: WorldVec2, angle: f64, flip: bool, scale: f32) {
 		draw_textured_model(
 		textured_model, 
 		position, 
@@ -379,11 +381,12 @@ draw_ui :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, an
 		scale, 
 		1.0,
 		Vec4{},
+		false,
 		false
 	)
 }
 
-draw_ui_colored :: proc(textured_model: ^TexturedModel, position: Vec2, origin: Vec2, angle: f32, flip: bool, scale: f32, color: Vec4) {
+draw_ui_colored :: proc(textured_model: ^TexturedModel, position: WorldVec2, origin: WorldVec2, angle: f64, flip: bool, scale: f32, color: Vec4) {
 	draw_textured_model(
 		textured_model, 
 		position, 
@@ -393,27 +396,29 @@ draw_ui_colored :: proc(textured_model: ^TexturedModel, position: Vec2, origin: 
 		scale, 
 		1.0,
 		color,
-		true
+		true,
+		false
 	)
 }
 
 @(private)
 draw_textured_model :: proc(
 	textured_model: ^TexturedModel, 
-	position: Vec2, 
-	origin: Vec2, 
-	angle: f32, 
+	position: WorldVec2, 
+	origin: WorldVec2, 
+	angle: f64, 
 	flip: bool, 
 	scale: f32, 
 	zoom: f32, 
 	color: Vec4, 
-	use_color: bool
+	use_color: bool,
+	world_space: bool
 ) {
 	assert(textured_model != nil, "draw_textured_model: textured_model is nil")
 	assert(textured_model.model.vertex_buffer != nil, "draw_textured_model: textured_model has no model")
 	assert(textured_model.texture.texture != nil, "draw_textured_model: textured_model has no texture")
 
-	mvp_matrix := create_mvp_matrix(position, origin, angle, scale, zoom)
+	mvp_matrix := create_mvp_matrix(position, origin, angle, scale, zoom, world_space)
 	metadata := DrawCallMetadata {
 		mvp = mvp_matrix,
 		color = color,
@@ -426,21 +431,27 @@ draw_textured_model :: proc(
 }
 
 @(private)
-create_mvp_matrix :: proc(position: Vec2, origin: Vec2, angle: f32, scale: f32, zoom: f32) -> linalg.Matrix4x4f32 {
-	RADIAN_MUL: f32 = math.PI / 180.0
+create_mvp_matrix :: proc(position: WorldVec2, origin: WorldVec2, angle: f64, scale: f32, zoom: f32, world_space: bool) -> linalg.Matrix4x4f32 {
+	RADIAN_MUL: f64 = math.PI / 180.0
+	local_position := position
+	if world_space {
+		local_position -= instance.camera_position
+	}
 	
 	// Model = T(position) * Rz(angle) * S(scale) * T(-origin)
-	model_matrix := linalg.matrix4_translate_f32(Vec3{position.x, position.y, 0.0})
-	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_rotate_f32(angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
+	model_matrix := linalg.matrix4_translate_f32(Vec3{f32(local_position.x), f32(local_position.y), 0.0})
+	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_rotate_f32(f32(angle * RADIAN_MUL), Vec3{0.0, 0.0, 1.0}))
 	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_scale_f32(Vec3{scale, scale, 1.0}))
-	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_translate_f32(Vec3{-origin.x, -origin.y, 0.0}))
+	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_translate_f32(Vec3{-f32(origin.x), -f32(origin.y), 0.0}))
 
 	// View matrix
 	frame_buffer_half_width := f32(instance.buffer_width) / 2.0
 	frame_buffer_half_height := f32(instance.buffer_height) / 2.0
-	view_matrix := linalg.matrix4_translate_f32(Vec3{-instance.camera_position.x + frame_buffer_half_width, -instance.camera_position.y + frame_buffer_half_height, 0.0})
-	view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_rotate_f32(instance.camera_angle * RADIAN_MUL, Vec3{0.0, 0.0, 1.0}))
-	view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_scale_f32(Vec3{zoom, zoom, 1.0}))
+	view_matrix := linalg.matrix4_translate_f32(Vec3{frame_buffer_half_width, frame_buffer_half_height, 0.0})
+	if world_space {
+		view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_rotate_f32(f32(instance.camera_angle * RADIAN_MUL), Vec3{0.0, 0.0, 1.0}))
+		view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_scale_f32(Vec3{zoom, zoom, 1.0}))
+	}
 
 	// MVP
 	mvp_matrix := linalg.matrix_mul(instance.projection_matrix, view_matrix)
@@ -619,11 +630,11 @@ fit_rectangle_in_rectangle :: proc(inner_width: f32, inner_height: f32, outer_wi
 	}
 }
 
-set_camera_position :: proc(position: Vec2) {
+set_camera_position :: proc(position: WorldVec2) {
 	instance.camera_position = position
 }
 
-set_camera_angle :: proc(angle: f32) {
+set_camera_angle :: proc(angle: f64) {
 	instance.camera_angle = angle
 }
 
@@ -631,11 +642,11 @@ set_camera_zoom :: proc(zoom: f32) {
 	instance.camera_zoom = zoom
 }
 
-get_camera_position :: proc() -> Vec2 {
+get_camera_position :: proc() -> WorldVec2 {
 	return instance.camera_position
 }
 
-get_camera_angle :: proc() -> f32 {
+get_camera_angle :: proc() -> f64 {
 	return instance.camera_angle
 }
 

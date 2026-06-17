@@ -48,10 +48,10 @@ is_button_pressed :: proc(button: Button) -> bool {
 
 // Get mouse position in screen space
 get_mouse_position :: proc() -> Vec2 {
-    return window.get_mouse_position()
+    return from_renderer_vec2(window.get_mouse_position())
 }
 
 // Get mouse position in world space (taking camera position into account)
 get_mouse_absolute_position :: proc() -> Vec2 {
-    return window.get_mouse_position() + renderer.get_camera_position()
+    return get_mouse_position() + get_camera_position()
 }

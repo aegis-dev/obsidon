@@ -17,6 +17,8 @@ package renderer
 
 import "vendor:wgpu"
 
+WorldVec2 :: [2]f64
+
 Vec2 :: [2]f32
 
 Vec3 :: [3]f32

@@ -22,16 +22,16 @@ text_draw :: proc(font: ^Font, text: string, position: Vec2, scale: f32, color: 
     for char in text {
         if char == '\n' {
             glyph_position.x = position.x
-            glyph_position.y -= a_glyph.height * scale + a_glyph.height * line_spacing * scale // 0.2 for line spacing
+            glyph_position.y -= f64(a_glyph.height * scale + a_glyph.height * line_spacing * scale) // 0.2 for line spacing
             continue
         }
         
         glyph := font.glyphs[char]
         if glyph.width == 0 || glyph.height == 0 {
-            glyph_position.x += a_glyph.advance * scale
+            glyph_position.x += f64(a_glyph.advance * scale)
         } else {
             y_offset := glyph.height + glyph.offset_y // Adjust for baseline
-            offset := Vec2{0.0, y_offset * 2 * scale}
+            offset := Vec2{0.0, f64(y_offset * 2 * scale)}
 
             if ui {
                 sprite_draw_ui_colored(&glyph.sprite, glyph_position, offset, 0.0, false, scale, color)
@@ -39,7 +39,7 @@ text_draw :: proc(font: ^Font, text: string, position: Vec2, scale: f32, color: 
                 sprite_draw_colored(&glyph.sprite, glyph_position, offset, 0.0, false, scale, color)
             }
 
-            glyph_position.x += (glyph.advance + 1) * scale // +1 for letter spacing
+            glyph_position.x += f64((glyph.advance + 1) * scale) // +1 for letter spacing
         }
     }
 }
