@@ -34,6 +34,9 @@ Glyph :: struct {
 
 Font :: struct {
     glyphs: map[rune]Glyph,
+    ascent: f32,
+    descent: f32,
+    line_gap: f32,
 }
 
 font_load :: proc(ttf_data: []u8, font_size: f32) -> Font {
@@ -46,13 +49,17 @@ font_load :: proc(ttf_data: []u8, font_size: f32) -> Font {
 
     scale := truetype.ScaleForPixelHeight(&font_info, font_size)
 
+    ascent, descent, line_gap: i32
+    truetype.GetFontVMetrics(&font_info, &ascent, &descent, &line_gap)
+
     font := Font{
         glyphs = make(map[rune]Glyph),
+        ascent = f32(ascent) * scale,
+        descent = f32(descent) * scale,
+        line_gap = f32(line_gap) * scale,
     }
 
-    characters := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,.!?:\"'\\|/+=-_)(}{&^%$#@~<>"
-
-    for char in characters {
+    for char in rune(32)..<rune(127) {
         font.glyphs[char] = render_glyph(&font_info, char, scale)
     }
 
@@ -79,11 +86,21 @@ render_glyph :: proc(font: ^truetype.fontinfo, char: rune, scale: f32) -> Glyph 
     advance, left_side_bearing: i32
     truetype.GetCodepointHMetrics(font, char, &advance, &left_side_bearing)
 
+    if width == 0 || height == 0 {
+        return Glyph{
+            advance = f32(advance) * scale,
+            offset_x = f32(xoff),
+            offset_y = f32(yoff),
+            width = 0,
+            height = 0,
+        }
+    }
+
     // Convert grayscale to RGBA for PNG
     rgba_data := make([]u8, width * height * 4)
     defer delete(rgba_data)
 
-    if bitmap_ptr == nil || width == 0 || height == 0 {
+    if bitmap_ptr == nil {
         log.panicf("Failed to render glyph for char '%c'", char)
     }
     defer truetype.FreeBitmap(bitmap_ptr, nil)
