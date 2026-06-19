@@ -62,8 +62,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let metadata = draw_call_metadata.data[input.instance_idx];
     let tex_color = textureSample(my_texture, my_sampler, input.tex_coords);
 
-    // Mix override color into the texture RGB; keep original texture alpha.
-    let factor = clamp(metadata.use_color * metadata.color.a, 0.0, 1.0);
-    let rgb = mix(tex_color.rgb, metadata.color.rgb, factor);
-    return vec4<f32>(rgb, tex_color.a);
+    let using_color = metadata.use_color > 0.5;
+    let rgb = mix(tex_color.rgb, metadata.color.rgb, select(0.0, 1.0, using_color));
+    let out_alpha = tex_color.a * select(1.0, metadata.color.a, using_color);
+    return vec4<f32>(rgb, out_alpha);
 }
