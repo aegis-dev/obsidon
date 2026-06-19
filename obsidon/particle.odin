@@ -73,11 +73,12 @@ particle_emit :: proc(state: ^ParticleState, position: Vec2, rotation: f64, emis
     angle_offset := (rand.float64() - 0.5) * emission_angle
     particle_rotation := rotation + angle_offset
     particle_velocity := vec2_direction(particle_rotation) * state.particle_speed
+    visual_rotation := rand.float64() * 2.0 * math.PI
 
     append(&state.particles, Particle{
         position = position,
         velocity = particle_velocity,
-        rotation = particle_rotation,
+        rotation = visual_rotation,
         lifetime = state.particle_lifetime,
         initial_lifetime = state.particle_lifetime,
     })
