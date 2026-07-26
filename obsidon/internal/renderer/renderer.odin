@@ -309,7 +309,7 @@ begin_draw :: proc() {
 		// }
 		// resize()
 		log.panic("Resize???")
-	case .OutOfMemory, .DeviceLost, .Error:
+	case .Error, .Occluded:
 		// Fatal error
 		log.panicf("Error: get_current_texture status=%v", instance.surface_texture.status)
 	}
