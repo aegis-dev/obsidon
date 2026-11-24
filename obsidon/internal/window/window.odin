@@ -20,84 +20,112 @@ import "core:c"
 import "core:log"
 
 import "vendor:glfw"
-import "vendor:wgpu"
-import "vendor:wgpu/glfwglue"
 
 KEY_COUNT :: i32(Key.KEY_LAST) + 1
 BUTTON_COUNT :: i32(Button.MOUSE_BUTTON_LAST) + 1
 
-@(private)
-instance: struct {
-    window_width: u32,
+Window_Mode :: enum {
+    // Borderless window covering the primary monitor.
+    Fullscreen,
+    // Regular resizable window.
+    Windowed,
+}
+
+Window_State :: struct {
+    ctx:           runtime.Context,
+    window_width:  u32,
     window_height: u32,
-    framebuffer_width: u32,
-    framebuffer_height: u32,
+    window:        glfw.WindowHandle,
+    resized:       bool,
 
-    window: glfw.WindowHandle,
-
-    prev_keys: [KEY_COUNT]State,
-    cur_keys:  [KEY_COUNT]State,
+    prev_keys:    [KEY_COUNT]State,
+    cur_keys:     [KEY_COUNT]State,
     prev_buttons: [BUTTON_COUNT]State,
     cur_buttons:  [BUTTON_COUNT]State,
 
-    mouse_position: Vec2,
-    mouse_sensitivity: Vec2,
+    cursor_locked:  bool,
+    has_last_mouse: bool,
+    last_mouse:     [2]f64,
+    mouse_delta:    Vec2, // window pixels this frame, y up
+    mouse_position: Vec2, // virtual cursor, render buffer pixels, centred, y up
+    scroll:         Vec2,
+    buffer_width:   u32,
+    buffer_height:  u32,
+    viewport:       [4]f32, // where the buffer is shown in the window: x, y, w, h
 }
 
-init :: proc(name: cstring, framebuffer_width: u32, framebuffer_height: u32) -> (window_width: u32, window_height: u32) {
+@(private)
+instance_storage: Window_State
+
+// Package state lives behind a pointer so a hot reloaded build can adopt it.
+@(private)
+instance: ^Window_State = &instance_storage
+
+get_state_ptr :: proc() -> rawptr { return instance }
+set_state_ptr :: proc(p: rawptr) { instance = (^Window_State)(p) }
+get_state_size :: proc() -> int { return size_of(Window_State) }
+
+init :: proc(name: cstring, mode: Window_Mode, width: u32, height: u32) -> (window_width: u32, window_height: u32) {
+    instance.ctx = context
     glfw.SetErrorCallback(glfw_error_callback)
 
     if !glfw.Init() {
         log.panic("glfw: could not be initialized")
     }
 
-    monitor := glfw.GetPrimaryMonitor()
-    if monitor == nil {
-        log.panic("glfw: No primary monitor")
-    }
-
-    mode := glfw.GetVideoMode(monitor)
-    width  := mode.width
-    height := mode.height
-
-    mx, my := glfw.GetMonitorPos(monitor)
-
     glfw.WindowHint(glfw.CLIENT_API, glfw.NO_API)
-    glfw.WindowHint(glfw.DECORATED, glfw.FALSE)
     glfw.WindowHint(glfw.RESIZABLE, glfw.TRUE)
     glfw.WindowHint(glfw.FOCUSED, glfw.TRUE)
     glfw.WindowHint(glfw.AUTO_ICONIFY, glfw.FALSE)
-    
-    instance.window = glfw.CreateWindow(c.int(width), c.int(height), name, monitor, nil)
 
+    switch mode {
+    case .Fullscreen:
+        monitor := glfw.GetPrimaryMonitor()
+        if monitor == nil {
+            log.panic("glfw: no primary monitor")
+        }
+        video := glfw.GetVideoMode(monitor)
+        glfw.WindowHint(glfw.DECORATED, glfw.FALSE)
+        instance.window = glfw.CreateWindow(video.width, video.height, name, monitor, nil)
+        if instance.window != nil {
+            mx, my := glfw.GetMonitorPos(monitor)
+            glfw.SetWindowPos(instance.window, mx, my)
+        }
+    case .Windowed:
+        glfw.WindowHint(glfw.DECORATED, glfw.TRUE)
+        instance.window = glfw.CreateWindow(c.int(max(width, 64)), c.int(max(height, 64)), name, nil, nil)
+    }
     if instance.window == nil {
         log.panic("glfw: failed to create a window")
     }
 
-    // // Window content scaling (for high-DPI displays)
-    // // We need to do it after window creation because monitor scale does not
-    // // report correct values
-    // width_scale, height_scale := glfw.GetWindowContentScale(instance.window)
-    // width  = c.int(f32(width) / width_scale)
-    // height = c.int(f32(height) / height_scale)
+    fw, fh := glfw.GetFramebufferSize(instance.window)
+    instance.window_width = u32(fw)
+    instance.window_height = u32(fh)
 
-    // // Now resize the window to match the scaling
-    // glfw.SetWindowSize(instance.window, width, height)
+    install_callbacks()
+    if glfw.RawMouseMotionSupported() {
+        glfw.SetInputMode(instance.window, glfw.RAW_MOUSE_MOTION, 1)
+    }
+    set_cursor_locked(true)
 
-    // Set initial mouse position to the center of the window
-    glfw.SetCursorPos(instance.window, f64(width) / 2.0, f64(height) / 2.0)
+    return instance.window_width, instance.window_height
+}
 
-    glfw.SetWindowPos(instance.window, mx, my)
-    glfw.SetInputMode(instance.window, glfw.CURSOR, glfw.CURSOR_DISABLED)
+// Size of the render buffer and the window rectangle it is shown in,
+// used to map the cursor into buffer coordinates.
+set_buffer_layout :: proc(width: u32, height: u32, viewport: [4]f32) {
+    instance.buffer_width = width
+    instance.buffer_height = height
+    instance.viewport = viewport
+}
 
-    instance.window_width = u32(width)
-    instance.window_height = u32(height)
-    instance.framebuffer_width = framebuffer_width
-    instance.framebuffer_height = framebuffer_height
-
-    instance.mouse_sensitivity = Vec2{f32(framebuffer_width) / f32(width), f32(framebuffer_height) / f32(height)}
-
-    return u32(width), u32(height)
+// (Re-)register GLFW callbacks. Called again after a hot reload so GLFW calls
+// into the newly loaded code.
+install_callbacks :: proc() {
+    glfw.SetErrorCallback(glfw_error_callback)
+    glfw.SetFramebufferSizeCallback(instance.window, on_framebuffer_size)
+    glfw.SetScrollCallback(instance.window, on_scroll)
 }
 
 cleanup :: proc() {
@@ -110,10 +138,11 @@ should_close :: proc() -> bool {
 }
 
 poll_events :: proc() {
+    instance.scroll = {}
     glfw.PollEvents()
     refresh_keyboard()
     refresh_mouse_buttons()
-    refresh_mouse_position()
+    refresh_mouse()
 }
 
 get_window_handle :: proc() -> glfw.WindowHandle {
@@ -121,11 +150,41 @@ get_window_handle :: proc() -> glfw.WindowHandle {
 }
 
 get_window_width :: proc() -> u32 {
-	return instance.window_width
+    return instance.window_width
 }
 
 get_window_height :: proc() -> u32 {
-	return instance.window_height
+    return instance.window_height
+}
+
+// Returns true once after the window size changed.
+consume_resize :: proc() -> bool {
+    r := instance.resized
+    instance.resized = false
+    return r
+}
+
+// Locked: the cursor is hidden and captured (mouse look). Unlocked: normal OS cursor.
+set_cursor_locked :: proc(locked: bool) {
+    instance.cursor_locked = locked
+    glfw.SetInputMode(instance.window, glfw.CURSOR, glfw.CURSOR_DISABLED if locked else glfw.CURSOR_NORMAL)
+    instance.has_last_mouse = false
+}
+
+is_cursor_locked :: proc() -> bool {
+    return instance.cursor_locked
+}
+
+@(private)
+on_framebuffer_size :: proc "c" (window: glfw.WindowHandle, width: c.int, height: c.int) {
+    instance.window_width = u32(max(width, 0))
+    instance.window_height = u32(max(height, 0))
+    instance.resized = true
+}
+
+@(private)
+on_scroll :: proc "c" (window: glfw.WindowHandle, x: f64, y: f64) {
+    instance.scroll += Vec2{f32(x), f32(y)}
 }
 
 @(private)

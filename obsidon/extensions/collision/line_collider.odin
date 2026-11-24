@@ -28,7 +28,7 @@ line_collider_init :: proc(start: Vec2, end: Vec2) -> LineCollider {
     return LineCollider{start, end}
 }
 
-line_collider_collides_with_ray :: proc(collider: ^LineCollider, ray: ^Ray, max_distance: f32) -> (bool, Vec2) {
+line_collider_collides_with_ray :: proc(collider: ^LineCollider, ray: ^Ray, max_distance: f64) -> (bool, Vec2) {
     line_dir := collider.end - collider.start
     line_perp := Vec2{-line_dir.y, line_dir.x}
 

@@ -20,4 +20,6 @@ Scene :: struct {
     on_update:  proc(s: ^Scene) -> ^Scene,
     on_draw:    proc(s: ^Scene),
     on_destroy: proc(s: ^Scene),
+    // Optional: called after the game code was hot reloaded (rebuild shaders here).
+    on_reload:  proc(s: ^Scene),
 }

@@ -31,6 +31,10 @@ is_key_pressed :: proc(key: Key) -> bool {
     return instance.cur_keys[key] == .Down && instance.prev_keys[key] == .Up
 }
 
+is_key_released :: proc(key: Key) -> bool {
+    return instance.cur_keys[key] == .Up && instance.prev_keys[key] == .Down
+}
+
 get_button_state :: proc(button: Button) -> State {
     return instance.cur_buttons[button]
 }
@@ -43,55 +47,70 @@ is_button_pressed :: proc(button: Button) -> bool {
     return instance.cur_buttons[button] == .Down && instance.prev_buttons[button] == .Up
 }
 
+is_button_released :: proc(button: Button) -> bool {
+    return instance.cur_buttons[button] == .Up && instance.prev_buttons[button] == .Down
+}
+
+// Virtual cursor in render buffer pixels, (0,0) at the centre, y up.
 get_mouse_position :: proc() -> Vec2 {
     return instance.mouse_position
 }
 
+// Raw mouse movement this frame in window pixels (x right, y up).
+get_mouse_delta :: proc() -> Vec2 {
+    return instance.mouse_delta
+}
+
+get_scroll :: proc() -> Vec2 {
+    return instance.scroll
+}
+
 @(private)
 refresh_keyboard :: proc() {
-    for k in 0..<len(instance.cur_keys) {
+    // GLFW reports an error for key codes below KEY_SPACE.
+    for k in i32(glfw.KEY_SPACE)..<KEY_COUNT {
         state := glfw.GetKey(instance.window, c.int(k))
         instance.prev_keys[k] = instance.cur_keys[k]
-        if state == glfw.PRESS || state == glfw.REPEAT {
-            instance.cur_keys[k] = State.Down
-        } else {
-            instance.cur_keys[k] = State.Up
-        }
+        instance.cur_keys[k] = .Down if state == glfw.PRESS || state == glfw.REPEAT else .Up
     }
 }
 
 @(private)
 refresh_mouse_buttons :: proc() {
-    for b in 0..<len(instance.cur_buttons) {
+    for b in 0..<BUTTON_COUNT {
         state := glfw.GetMouseButton(instance.window, c.int(b))
         instance.prev_buttons[b] = instance.cur_buttons[b]
-        if state == glfw.PRESS {
-            instance.cur_buttons[b] = State.Down
-        } else {
-            instance.cur_buttons[b] = State.Up
-        }
+        instance.cur_buttons[b] = .Down if state == glfw.PRESS else .Up
     }
 }
 
 @(private)
-refresh_mouse_position :: proc() {
+refresh_mouse :: proc() {
     x, y := glfw.GetCursorPos(instance.window)
-    center := Vec2{f32(instance.window_width) / 2.0, f32(instance.window_height) / 2.0}
-    movement := (Vec2{f32(x), f32(y)} - center) * instance.mouse_sensitivity
-
-    instance.mouse_position += Vec2{movement.x, -movement.y}
-
-    half_framebuffer := Vec2{f32(instance.framebuffer_width) / 2.0, f32(instance.framebuffer_height) / 2.0}
-    if instance.mouse_position.x < -half_framebuffer.x {
-        instance.mouse_position.x = -half_framebuffer.x
-    } else if instance.mouse_position.x > half_framebuffer.x {
-        instance.mouse_position.x = half_framebuffer.x
+    if !instance.has_last_mouse {
+        instance.last_mouse = {x, y}
+        instance.has_last_mouse = true
     }
-    if instance.mouse_position.y < -half_framebuffer.y {
-        instance.mouse_position.y = -half_framebuffer.y
-    } else if instance.mouse_position.y > half_framebuffer.y {
-        instance.mouse_position.y = half_framebuffer.y
-    }
+    delta := Vec2{f32(x - instance.last_mouse.x), -f32(y - instance.last_mouse.y)}
+    instance.last_mouse = {x, y}
+    instance.mouse_delta = delta
 
-    glfw.SetCursorPos(instance.window, f64(center.x), f64(center.y))
+    bw := f32(instance.buffer_width if instance.buffer_width > 0 else instance.window_width)
+    bh := f32(instance.buffer_height if instance.buffer_height > 0 else instance.window_height)
+    vp := instance.viewport
+    if vp.z <= 0 || vp.w <= 0 {
+        vp = {0, 0, f32(max(instance.window_width, 1)), f32(max(instance.window_height, 1))}
+    }
+    if instance.cursor_locked {
+        // Virtual cursor driven by relative motion, clamped to the buffer.
+        instance.mouse_position += Vec2{delta.x * bw / vp.z, delta.y * bh / vp.w}
+    } else {
+        // Follow the OS cursor, mapped into the area the buffer is shown in.
+        instance.mouse_position = Vec2{
+            ((f32(x) - vp.x) / vp.z - 0.5) * bw,
+            -((f32(y) - vp.y) / vp.w - 0.5) * bh,
+        }
+    }
+    instance.mouse_position.x = clamp(instance.mouse_position.x, -bw * 0.5, bw * 0.5)
+    instance.mouse_position.y = clamp(instance.mouse_position.y, -bh * 0.5, bh * 0.5)
 }

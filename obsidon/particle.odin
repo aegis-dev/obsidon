@@ -14,8 +14,8 @@ Particle :: struct {
 
 ParticleStateOptions :: struct {
     end_scale:   f32,
-    start_color: Vec4,
-    end_color:   Vec4,
+    start_color: Color,
+    end_color:   Color,
 }
 
 ParticleState :: struct {
@@ -23,8 +23,8 @@ ParticleState :: struct {
     origin:            Vec2,
     scale:             f32,
     end_scale:         f32,
-    start_color:       Vec4,
-    end_color:         Vec4,
+    start_color:       Color,
+    end_color:         Color,
     emission_interval: f64,
     particle_lifetime: f64,
     particle_speed:    f64,
@@ -130,21 +130,8 @@ particle_draw :: proc(state: ^ParticleState) {
     for &particle in state.particles {
         life_t := particle_life_t(&particle)
         scale := lerp_f32(state.scale, state.end_scale, life_t)
-        color := lerp_vec4(state.start_color, state.end_color, life_t)
+        color := lerp_color(state.start_color, state.end_color, life_t)
         sprite_draw_colored(state.sprite, particle.position, state.origin, particle.rotation, false, scale, color)
-    }
-}
-
-particle_draw_ui :: proc(state: ^ParticleState) {
-    if state.sprite == nil {
-        return
-    }
-
-    for &particle in state.particles {
-        life_t := particle_life_t(&particle)
-        scale := lerp_f32(state.scale, state.end_scale, life_t)
-        color := lerp_vec4(state.start_color, state.end_color, life_t)
-        sprite_draw_ui_colored(state.sprite, particle.position, state.origin, particle.rotation, false, scale, color)
     }
 }
 
@@ -169,7 +156,7 @@ lerp_f32 :: proc(a: f32, b: f32, t: f64) -> f32 {
 }
 
 @(private)
-lerp_vec4 :: proc(a: Vec4, b: Vec4, t: f64) -> Vec4 {
+lerp_color :: proc(a: Color, b: Color, t: f64) -> Color {
     return {
         lerp_f32(a[0], b[0], t),
         lerp_f32(a[1], b[1], t),

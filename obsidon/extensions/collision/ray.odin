@@ -28,6 +28,6 @@ ray_init :: proc(origin: Vec2, direction: Vec2) -> Ray {
     return Ray{origin, obsidon.vec2_normalize(direction)}
 }
 
-ray_at :: proc(ray: ^Ray, distance: f32) -> Vec2 {
+ray_at :: proc(ray: ^Ray, distance: f64) -> Vec2 {
     return ray.origin + ray.direction * distance
 }

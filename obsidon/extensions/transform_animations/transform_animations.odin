@@ -161,7 +161,7 @@ transform_animation_add_transform_into_step :: proc(transform_animation: ^Transf
                 time_left := step.duration - step.elapsed_time
                 completed := delta_time / time_left
 
-                transform.position += (step.target_transform.position - transform.position) * completed
+                transform.position += (step.target_transform.position - transform.position) * f64(completed)
                 transform.angle += (step.target_transform.angle - transform.angle) * completed
                 transform.scale += (step.target_transform.scale - transform.scale) * completed
 

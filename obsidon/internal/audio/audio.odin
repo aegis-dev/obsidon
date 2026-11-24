@@ -19,10 +19,20 @@ import "core:log"
 
 import "vendor:miniaudio"
 
-@(private)
-instance: struct {
+Audio_State :: struct {
     engine: miniaudio.engine,
 }
+
+@(private)
+instance_storage: Audio_State
+
+// Package state lives behind a pointer so a hot reloaded build can adopt it.
+@(private)
+instance: ^Audio_State = &instance_storage
+
+get_state_ptr :: proc() -> rawptr { return instance }
+set_state_ptr :: proc(p: rawptr) { instance = (^Audio_State)(p) }
+get_state_size :: proc() -> int { return size_of(Audio_State) }
 
 init :: proc() {
     result := miniaudio.engine_init(nil, &instance.engine)

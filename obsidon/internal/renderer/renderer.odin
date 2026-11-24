@@ -17,660 +17,785 @@ package renderer
 
 import "base:runtime"
 
+import "core:fmt"
 import "core:log"
-import "core:slice"
 import "core:strings"
-import "core:math"
-import "core:math/linalg"
 
-import "vendor:wgpu"
 import "vendor:glfw"
+import "vendor:wgpu"
 import "vendor:wgpu/glfwglue"
 
-SHADER :: string(#load("shader.wgsl"))
+import sh "../../shader"
+
+MAX_LIGHTS            :: 256
+MAX_OVERLAY_DRAWS     :: 16384
+INITIAL_DRAW_CAPACITY :: 4096
+
+HDR_FORMAT    :: wgpu.TextureFormat.RGBA16Float
+LDR_FORMAT    :: wgpu.TextureFormat.RGBA8Unorm
+DEPTH_FORMAT  :: wgpu.TextureFormat.Depth32Float
+NORMAL_FORMAT :: wgpu.TextureFormat.RGBA16Float
+AO_FORMAT     :: wgpu.TextureFormat.RGBA8Unorm
 
 @(private)
-DrawCallMetadata :: struct #packed {
-	mvp: 	   linalg.Matrix4x4f32,
-	color: 	   Vec4,
-	use_color: f32,
-	flip_x:    f32,
-	flip_y:    f32,
-	_padding:  [1]f32,
-}
-
-// Also in shader.wgsl
-MAX_DRAW_CALLS :: 8192
+VF :: wgpu.ShaderStageFlags{.Vertex, .Fragment}
+@(private)
+F :: wgpu.ShaderStageFlags{.Fragment}
 
 @(private)
-instance: struct {
-	ctx: 			   runtime.Context,
-	window_width: 	   u32,
-	window_height: 	   u32,
-	buffer_width: 	   u32,
-	buffer_height: 	   u32,
-	instance:          wgpu.Instance,
-	surface:           wgpu.Surface,
-	adapter:           wgpu.Adapter,
-	device:            wgpu.Device,
-	config:            wgpu.SurfaceConfiguration,
-	queue:             wgpu.Queue,
-	module:            wgpu.ShaderModule,
-	bind_group_layout: wgpu.BindGroupLayout,
-	pipeline_layout:   wgpu.PipelineLayout,
-	pipeline:          wgpu.RenderPipeline,
-	sampler: 	 	   wgpu.Sampler,
-	storage_buffer:    wgpu.Buffer,
+FULLSCREEN_WGSL :: string(#load("wgsl/fullscreen.wgsl"))
+@(private)
+SSAO_WGSL :: string(#load("wgsl/ssao.wgsl"))
+@(private)
+SSAO_BLUR_WGSL :: string(#load("wgsl/ssao_blur.wgsl"))
+@(private)
+TONEMAP_WGSL :: string(#load("wgsl/tonemap.wgsl"))
+@(private)
+BLOOM_WGSL :: string(#load("wgsl/bloom.wgsl"))
+MAX_BLOOM_LEVELS :: 6
+@(private)
+DEBUG_VIEW_WGSL :: string(#load("wgsl/debug_view.wgsl"))
+@(private)
+BLIT_WGSL :: string(#load("wgsl/blit.wgsl"))
+@(private)
+OVERLAY_WGSL :: string(#load("wgsl/overlay.wgsl"))
 
-	surface_texture: 		 wgpu.SurfaceTexture,
-	surface_texture_view:	 wgpu.TextureView,
-	command_encoder: 	 	 wgpu.CommandEncoder,
-	render_pass_encoder: 	 wgpu.RenderPassEncoder,
-	offscreen_quad: 	     TexturedModel,
+MAX_CASCADES      :: 4
+MAX_SPOT_SHADOWS  :: 4
+MAX_SHADOW_VIEWS  :: MAX_CASCADES + MAX_SPOT_SHADOWS
 
-	clear_color:       	[4]f64,
-	camera_position:   	WorldVec2,
-	camera_angle:      	f64,
-	camera_zoom:	   	f32,
-
-	screen_color_override: 	   		Vec4,
-	use_screen_color_override: 		bool,
-
-	projection_matrix: 	linalg.Matrix4x4f32,
-	draw_call: u64,
+Render_Target :: struct {
+    texture: wgpu.Texture,
+    view:    wgpu.TextureView,
+    width:   u32,
+    height:  u32,
+    // Per-layer views of array targets (shadow maps).
+    layers:      [4]wgpu.TextureView,
+    layer_count: int,
 }
 
-init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, buffer_width: u32, buffer_height: u32) {
-	instance.ctx = context
-	instance.window_width = window_width
-	instance.window_height = window_height
-	instance.buffer_width = buffer_width
-	instance.buffer_height = buffer_height
-
-	instance.instance = wgpu.CreateInstance(nil)
-	if instance.instance == nil {
-		panic("WebGPU is not supported")
-	}
-
-	instance.surface = glfwglue.GetSurface(instance.instance, window)
-
-	wgpu.InstanceRequestAdapter(instance.instance, &{ compatibleSurface = instance.surface }, { callback = on_adapter })
-
-	on_adapter :: proc "c" (status: wgpu.RequestAdapterStatus, adapter: wgpu.Adapter, message: string, userdata1: rawptr, userdata2: rawptr) {
-		context = instance.ctx
-		if status != .Success || adapter == nil {
-			log.panic("request adapter failure: [%v] %s", status, message)
-		}
-		instance.adapter = adapter
-
-		required_features := wgpu.FeatureName.VertexWritableStorage // or VERTEX_READ_STORAGE if available
-
-		wgpu.AdapterRequestDevice(adapter, 
-			&wgpu.DeviceDescriptor{
-				requiredFeatureCount = 1,
-				requiredFeatures = &required_features,
-			}, 
-			{ callback = on_device }
-		)
-	}
-
-	on_device :: proc "c" (status: wgpu.RequestDeviceStatus, device: wgpu.Device, message: string, userdata1: rawptr, userdata2: rawptr) {
-		context = instance.ctx
-		if status != .Success || device == nil {
-			log.panic("request device failure: [%v] %s", status, message)
-		}
-		instance.device = device 
-
-		when ODIN_OS == .Linux {
-			mode := wgpu.PresentMode.Mailbox
-		} else {
-			mode := wgpu.PresentMode.Immediate
-		}
-
-		instance.config = wgpu.SurfaceConfiguration {
-			device      = instance.device,
-			usage       = { .RenderAttachment },
-			format      = .BGRA8Unorm,
-			width       = instance.window_width,
-			height      = instance.window_height,
-			presentMode = mode,
-			alphaMode   = .Opaque,
-		}
-		wgpu.SurfaceConfigure(instance.surface, &instance.config)
-
-		instance.queue = wgpu.DeviceGetQueue(instance.device)
-
-		instance.module = wgpu.DeviceCreateShaderModule(instance.device, &{
-			nextInChain = &wgpu.ShaderSourceWGSL{
-				sType = .ShaderSourceWGSL,
-				code  = SHADER,
-			},
-		})
-
-		vertex_attributes := [2]wgpu.VertexAttribute {
-			{ format = .Float32x3, offset = 0, shaderLocation = 0 },
-			{ format = .Float32x2, offset = size_of(Vec3), shaderLocation = 1 }
-		}
-
-		vertex_buffer_layout := wgpu.VertexBufferLayout {
-			arrayStride    = size_of(Vertex),
-			stepMode       = .Vertex,
-			attributeCount = len(vertex_attributes),
-			attributes     = &vertex_attributes[0],
-		}
-		
-		instance.sampler = wgpu.DeviceCreateSampler(instance.device, &{
-			magFilter = .Nearest,
-			minFilter = .Nearest,
-			mipmapFilter = .Nearest,
-			lodMinClamp = 1.0,
-			lodMaxClamp = 1.0,
-			compare = .Undefined,
-			maxAnisotropy = 1,
-		})
-
-		instance.storage_buffer = wgpu.DeviceCreateBuffer(instance.device, &{
-			size = MAX_DRAW_CALLS * size_of(DrawCallMetadata),
-			usage = { .Storage, .CopyDst },
-			mappedAtCreation = false,
-		})
-
-		bind_group_layout_entries := [3]wgpu.BindGroupLayoutEntry {
-			{
-				binding    = 0,
-				visibility = { .Fragment },
-				texture    = { sampleType = .Float, viewDimension = ._2D, multisampled = false },
-			},
-			{
-				binding    = 1,
-				visibility = { .Fragment },
-				sampler    = { type = .Filtering },
-			},
-			{
-				binding    = 2,
-				visibility = { .Vertex, .Fragment },
-				buffer     = { type = .ReadOnlyStorage, hasDynamicOffset = false, minBindingSize = MAX_DRAW_CALLS * size_of(DrawCallMetadata) },
-			},
-		}
-
-		instance.bind_group_layout = wgpu.DeviceCreateBindGroupLayout(instance.device, &wgpu.BindGroupLayoutDescriptor{
-			entryCount = len(bind_group_layout_entries),
-			entries    = &bind_group_layout_entries[0]
-		})
-
-		instance.pipeline_layout = wgpu.DeviceCreatePipelineLayout(instance.device, &{
-			bindGroupLayoutCount = 1,
-			bindGroupLayouts     = &instance.bind_group_layout,
-		})
-
-		instance.pipeline = wgpu.DeviceCreateRenderPipeline(instance.device, &{
-			layout = instance.pipeline_layout,
-			vertex = {
-				module     = instance.module,
-				entryPoint = "vs_main",
-				bufferCount = 1,
-				buffers     = &vertex_buffer_layout,
-			},
-			fragment = &{
-				module      = instance.module,
-				entryPoint  = "fs_main",
-				targetCount = 1,
-				targets     = &wgpu.ColorTargetState{
-					format    = .BGRA8Unorm,
-					writeMask = wgpu.ColorWriteMaskFlags_All,
-					    blend     = &wgpu.BlendState{
-						color = wgpu.BlendComponent{
-							srcFactor = .SrcAlpha,
-							dstFactor = .OneMinusSrcAlpha,
-							operation = .Add,
-						},
-						alpha = wgpu.BlendComponent{
-							srcFactor = .One,
-							dstFactor = .OneMinusSrcAlpha,
-							operation = .Add,
-						},
-					},
-				},
-			},
-			primitive = {
-				topology = .TriangleList,
-				stripIndexFormat = .Undefined,
-				frontFace = .CCW,
-				cullMode = .None,
-
-			},
-			multisample = {
-				count = 1,
-				mask  = 0xFFFFFFFF,
-			},
-		})
-
-		offscreen_quad := []Vertex {
-			//      positions               tex coords
-			Vertex {Vec3 { 1.0,  1.0, 0.0}, Vec2 {1.0, 0.0}}, // top-right
-			Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}}, // bottom-right
-			Vertex {Vec3 {-1.0,  1.0, 0.0}, Vec2 {0.0, 0.0}}, // top-left
-
-			Vertex {Vec3 {-1.0,  1.0, 0.0}, Vec2 {0.0, 0.0}}, // top-left
-			Vertex {Vec3 { 1.0, -1.0, 0.0}, Vec2 {1.0, 1.0}}, // bottom-right
-			Vertex {Vec3 {-1.0, -1.0, 0.0}, Vec2 {0.0, 1.0}}, // bottom-left
-		}
-		offscreen_quad_buffer := model_load(offscreen_quad)
-
-		offscreen_texture := wgpu.DeviceCreateTexture(instance.device, &{
-			size = wgpu.Extent3D{ width = instance.buffer_width, height = instance.buffer_height, depthOrArrayLayers = 1 },
-			format = .BGRA8Unorm,
-			usage = { .RenderAttachment, .TextureBinding },
-			mipLevelCount = 1,
-			sampleCount = 1,
-		})
-		offscreen_texture_view := wgpu.TextureCreateView(offscreen_texture, nil)
-
-		instance.offscreen_quad = TexturedModel {
-			model = offscreen_quad_buffer,
-			texture = create_texture_from_texture_and_texture_view(
-				offscreen_texture,
-				offscreen_texture_view,
-				instance.buffer_width,
-				instance.buffer_height
-			)
-		}
-
-		instance.camera_position = WorldVec2{0.0, 0.0}
-		instance.camera_angle = 0.0
-		instance.camera_zoom = 1.0
-
-		instance.projection_matrix = linalg.matrix_ortho3d_f32(
-			0.0, 
-			f32(instance.buffer_width), 
-			0.0, 
-			f32(instance.buffer_height),
-			-1000.0, 
-			1000.0,
-			flip_z_axis=false
-		)
-	}
+Camera_State :: struct {
+    position:     DVec3,
+    rotation:     DQuat,
+    fov_y:        f64, // radians
+    near:         f64,
+    far:          f64, // 0 = infinite
+    orthographic: bool,
+    ortho_height: f64,
 }
 
-set_clear_color :: proc(r: f64, g: f64, b: f64, a: f64) {
-	instance.clear_color = [4]f64{r, g, b, a}
-}
-
-begin_draw :: proc() {
-	instance.surface_texture = wgpu.SurfaceGetCurrentTexture(instance.surface)
-
-	switch instance.surface_texture.status {
-	case .SuccessOptimal, .SuccessSuboptimal:
-		// All good, could handle suboptimal here.
-	case .Timeout, .Outdated, .Lost:
-		// Skip this frame, and re-configure surface.
-		// if instance.surface_texture.texture != nil {
-		// 	wgpu.TextureRelease(instance.surface_texture.texture)
-		// }
-		// resize()
-		log.panic("Resize???")
-	case .Error, .Occluded:
-		// Fatal error
-		log.panicf("Error: get_current_texture status=%v", instance.surface_texture.status)
-	}
-
-	instance.command_encoder = wgpu.DeviceCreateCommandEncoder(instance.device, nil)
-	instance.render_pass_encoder = wgpu.CommandEncoderBeginRenderPass(
-		instance.command_encoder, &{
-			colorAttachmentCount = 1,
-			colorAttachments = &wgpu.RenderPassColorAttachment{
-				view       = instance.offscreen_quad.texture.view,
-				loadOp     = .Clear,
-				storeOp    = .Store,
-				depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
-				clearValue = instance.clear_color,
-			},
-		},
-	)
-
-	set_viewport(
-		instance.offscreen_quad.texture.width, 
-		instance.offscreen_quad.texture.height,
-		instance.offscreen_quad.texture.width, 
-		instance.offscreen_quad.texture.height
-	)
-
-	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
-
-	instance.draw_call = 0
-}
-
-draw :: proc(textured_model: ^TexturedModel, position: WorldVec2, origin: WorldVec2, angle: f64, flip: bool, scale: f32) {
-	draw_textured_model(
-		textured_model, 
-		position, 
-		origin, 
-		angle, 
-		flip, 
-		scale, 
-		instance.camera_zoom,
-		Vec4{},
-		false,
-		true
-	)
-}
-
-draw_colored :: proc(textured_model: ^TexturedModel, position: WorldVec2, origin: WorldVec2, angle: f64, flip: bool, scale: f32, color: Vec4) {
-	draw_textured_model(
-		textured_model, 
-		position, 
-		origin, 
-		angle, 
-		flip, 
-		scale, 
-		instance.camera_zoom,
-		color,
-		true,
-		true
-	)
-}
-
-
-draw_ui :: proc(textured_model: ^TexturedModel, position: WorldVec2, origin: WorldVec2, angle: f64, flip: bool, scale: f32) {
-		draw_textured_model(
-		textured_model, 
-		position, 
-		origin, 
-		angle, 
-		flip, 
-		scale, 
-		1.0,
-		Vec4{},
-		false,
-		false
-	)
-}
-
-draw_ui_colored :: proc(textured_model: ^TexturedModel, position: WorldVec2, origin: WorldVec2, angle: f64, flip: bool, scale: f32, color: Vec4) {
-	draw_textured_model(
-		textured_model, 
-		position, 
-		origin, 
-		angle, 
-		flip, 
-		scale, 
-		1.0,
-		color,
-		true,
-		false
-	)
+Lighting_State :: struct {
+    ambient_sky:    Vec3, // linear * intensity
+    ambient_ground: Vec3,
+    sun_enabled:    bool,
+    sun_shadows:    bool,
+    sun_direction:  DVec3, // direction the light travels
+    sun_color:      Vec3,  // linear * intensity
+    fog_enabled:    bool,
+    fog_color:      Vec3,  // linear
+    fog_start:      f32,
+    fog_end:        f32,
+    shadow_bias:    f32,   // multiplier on the automatic bias
 }
 
 @(private)
-draw_textured_model :: proc(
-	textured_model: ^TexturedModel, 
-	position: WorldVec2, 
-	origin: WorldVec2, 
-	angle: f64, 
-	flip: bool, 
-	scale: f32, 
-	zoom: f32, 
-	color: Vec4, 
-	use_color: bool,
-	world_space: bool
-) {
-	assert(textured_model != nil, "draw_textured_model: textured_model is nil")
-	assert(textured_model.model.vertex_buffer != nil, "draw_textured_model: textured_model has no model")
-	assert(textured_model.texture.texture != nil, "draw_textured_model: textured_model has no texture")
-
-	mvp_matrix := create_mvp_matrix(position, origin, angle, scale, zoom, world_space)
-	metadata := DrawCallMetadata {
-		mvp = mvp_matrix,
-		color = color,
-		use_color = 1.0 if use_color else 0.0,
-		flip_x = 1.0 if flip else 0.0,
-		flip_y = 0.0,
-	}
-
-	render_textured_model(textured_model, &metadata)
+Draw_Instance :: struct {
+    model: DMat4,
+    tint:  Vec4,
 }
 
 @(private)
-create_mvp_matrix :: proc(position: WorldVec2, origin: WorldVec2, angle: f64, scale: f32, zoom: f32, world_space: bool) -> linalg.Matrix4x4f32 {
-	RADIAN_MUL: f64 = math.PI / 180.0
-	local_position := position
-	if world_space {
-		local_position -= instance.camera_position
-	}
-	
-	// Model = T(position) * Rz(angle) * S(scale) * T(-origin)
-	model_matrix := linalg.matrix4_translate_f32(Vec3{f32(local_position.x), f32(local_position.y), 0.0})
-	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_rotate_f32(f32(angle * RADIAN_MUL), Vec3{0.0, 0.0, 1.0}))
-	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_scale_f32(Vec3{scale, scale, 1.0}))
-	model_matrix = linalg.matrix_mul(model_matrix, linalg.matrix4_translate_f32(Vec3{-f32(origin.x), -f32(origin.y), 0.0}))
-
-	// View matrix
-	frame_buffer_half_width := f32(instance.buffer_width) / 2.0
-	frame_buffer_half_height := f32(instance.buffer_height) / 2.0
-	view_matrix := linalg.matrix4_translate_f32(Vec3{frame_buffer_half_width, frame_buffer_half_height, 0.0})
-	if world_space {
-		view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_rotate_f32(f32(instance.camera_angle * RADIAN_MUL), Vec3{0.0, 0.0, 1.0}))
-		view_matrix = linalg.matrix_mul(view_matrix, linalg.matrix4_scale_f32(Vec3{zoom, zoom, 1.0}))
-	}
-
-	// MVP
-	mvp_matrix := linalg.matrix_mul(instance.projection_matrix, view_matrix)
-	mvp_matrix = linalg.matrix_mul(mvp_matrix, model_matrix)
-
-	return mvp_matrix
-}
-
-end_draw_and_present :: proc() {
-	// Finish offscreen rendering
-	wgpu.RenderPassEncoderEnd(instance.render_pass_encoder)
-	wgpu.RenderPassEncoderRelease(instance.render_pass_encoder)
-
-	offscreen_command_buffer := wgpu.CommandEncoderFinish(instance.command_encoder, nil)
-	defer wgpu.CommandBufferRelease(offscreen_command_buffer)
-
-	wgpu.CommandEncoderRelease(instance.command_encoder)
-
-	// Render to the the screen surface
-	instance.surface_texture_view = wgpu.TextureCreateView(instance.surface_texture.texture, nil)
-	defer wgpu.TextureViewRelease(instance.surface_texture_view)
-
-	black_clear_color := [4]f64{0.0, 0.0, 0.0, 1.0}
-
-	instance.command_encoder = wgpu.DeviceCreateCommandEncoder(instance.device, nil)
-	instance.render_pass_encoder = wgpu.CommandEncoderBeginRenderPass(
-		instance.command_encoder, &{
-			colorAttachmentCount = 1,
-			colorAttachments = &wgpu.RenderPassColorAttachment{
-				view       = instance.surface_texture_view,
-				loadOp     = .Clear,
-				storeOp    = .Store,
-				depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
-				clearValue = black_clear_color,
-			},
-		},
-	)
-
-	wgpu.RenderPassEncoderSetPipeline(instance.render_pass_encoder, instance.pipeline)
-
-	viewport_width, viewport_height := fit_rectangle_in_rectangle(
-		f32(instance.buffer_width), f32(instance.buffer_height),
-		f32(instance.window_width), f32(instance.window_height)
-	)
-
-	set_viewport(u32(viewport_width), u32(viewport_height), instance.window_width, instance.window_height)
-
-	metadata := DrawCallMetadata {
-		mvp = linalg.MATRIX4F32_IDENTITY,
-		color = instance.screen_color_override,
-		use_color = instance.use_screen_color_override ? 1.0 : 0.0,
-		flip_x = 0.0,
-		flip_y = 0.0,
-	}
-
-	// Render offscreen texture quad to screen
-	render_textured_model(&instance.offscreen_quad, &metadata)
-
-	// Finish screen rendering
-	wgpu.RenderPassEncoderEnd(instance.render_pass_encoder)
-	wgpu.RenderPassEncoderRelease(instance.render_pass_encoder)
-
-	screen_command_buffer := wgpu.CommandEncoderFinish(instance.command_encoder, nil)
-	defer wgpu.CommandBufferRelease(screen_command_buffer)
-
-	wgpu.CommandEncoderRelease(instance.command_encoder)
-
-	// Submit and present
-	wgpu.QueueSubmit(instance.queue, { offscreen_command_buffer, screen_command_buffer })
-	wgpu.SurfacePresent(instance.surface)
+Draw_Command :: struct {
+    mesh:     ^Mesh,
+    material: ^Material,
+    first:    u32,
+    count:    u32,
+    depth:    f32,
 }
 
 @(private)
-render_textured_model :: proc(textured_model: ^TexturedModel, draw_call_metadata: ^DrawCallMetadata) {
-	wgpu.QueueWriteBuffer(
-		instance.queue,
-		instance.storage_buffer,
-		instance.draw_call * size_of(DrawCallMetadata),
-		rawptr(draw_call_metadata),
-		size_of(DrawCallMetadata)
-	)
-	
-	wgpu.RenderPassEncoderSetVertexBuffer(
-		instance.render_pass_encoder, 
-		0, 
-		textured_model.model.vertex_buffer, 
-		0, 
-		textured_model.model.buffer_size
-	)
-
-	wgpu.RenderPassEncoderSetBindGroup(
-		instance.render_pass_encoder,
-		0,          
-		textured_model.texture.bind_group
-	)
-
-	wgpu.RenderPassEncoderDraw(
-		instance.render_pass_encoder,
-		vertexCount=textured_model.model.vertex_count, 
-		instanceCount=1, 
-		firstVertex=0, 
-		firstInstance=u32(instance.draw_call)
-	)
-
-	instance.draw_call += 1
+Light_Instance :: struct {
+    position:  DVec3,
+    direction: Vec3,
+    color:     Vec3,
+    range:     f32,
+    spot:      bool,
+    cos_inner: f32,
+    cos_outer: f32,
+    cast_shadows: bool,
 }
 
 @(private)
-set_viewport :: proc(viewport_width: u32, viewport_height: u32, window_width: u32, window_height: u32) {
-	viewport_width := f32(viewport_width)
-	viewport_height := f32(viewport_height)
-	window_width := f32(window_width)
-	window_height := f32(window_height)
+Overlay_Command :: struct {
+    texture: ^Texture,
+    data:    Overlay_Draw_Data,
+}
 
-    aspect_ratio := viewport_width / viewport_height
-    window_aspect_ratio := window_width / window_height
-    tolerance: f32 = 1e-2
-    same_aspect_ratio := abs(aspect_ratio - window_aspect_ratio) < tolerance
-    narrow := aspect_ratio < window_aspect_ratio
+@(private)
+Fullscreen_Pipelines :: struct {
+    ssao:      wgpu.RenderPipeline,
+    ssao_blur: wgpu.RenderPipeline,
+    tonemap:   wgpu.RenderPipeline,
+    debug_view: wgpu.RenderPipeline,
+    bloom_prefilter: wgpu.RenderPipeline,
+    bloom_down:      wgpu.RenderPipeline,
+    bloom_up:        wgpu.RenderPipeline,
+    blit:      wgpu.RenderPipeline,
+    overlay:   wgpu.RenderPipeline,
+}
 
-    x: f32 = 0
-    y: f32 = 0
-    width: f32 = window_width
-    height: f32 = window_height
+Renderer_State :: struct {
+    ctx:            runtime.Context,
+    instance:       wgpu.Instance,
+    surface:        wgpu.Surface,
+    adapter:        wgpu.Adapter,
+    device:         wgpu.Device,
+    queue:          wgpu.Queue,
+    surface_config: wgpu.SurfaceConfiguration,
+    surface_srgb:   bool,
+    window:         glfw.WindowHandle,
+    window_width:   u32,
+    window_height:  u32,
+    surface_dirty:  bool,
+    config:         Graphics_Config,
+    render_width:   u32,
+    render_height:  u32,
 
-    if same_aspect_ratio {
-        x = 0
-        y = 0
-        width = viewport_width
-        height = viewport_height
-    } else if narrow {
-        min_height := min(viewport_height, window_height)
-        max_height := max(viewport_height, window_height)
-        modifier := max_height / min_height
-        new_width := viewport_width * modifier
-        new_height := window_height
-        offset := (window_width - new_width) / 2
-        x = offset
-        y = 0
-        width = new_width
-        height = new_height
-    } else {
-        min_width := min(viewport_width, window_width)
-        max_width := max(viewport_width, window_width)
-        modifier := max_width / min_width
-        new_width := window_width
-        new_height := viewport_height * modifier
-        x = 0
-        y = (window_height - new_height) / 2
-        width = new_width
-        height = new_height
+    // Samplers
+    sampler_material: wgpu.Sampler,
+    sampler_linear:   wgpu.Sampler,
+    sampler_nearest:  wgpu.Sampler,
+    sampler_shadow:   wgpu.Sampler,
+
+    // Layouts
+    frame_layout:      wgpu.BindGroupLayout, // group 0 of surface shaders
+    fullscreen_layout: wgpu.BindGroupLayout, // group 0 of post / internal fullscreen passes
+    blit_layout:       wgpu.BindGroupLayout,
+    overlay_layout:    wgpu.BindGroupLayout,
+    overlay_tex_layout: wgpu.BindGroupLayout,
+    fullscreen_pipeline_layout: wgpu.PipelineLayout,
+    blit_pipeline_layout:       wgpu.PipelineLayout,
+    overlay_pipeline_layout:    wgpu.PipelineLayout,
+    pipelines:         Fullscreen_Pipelines,
+
+    // Buffers
+    frame_buffer_camera: wgpu.Buffer,
+    shadow_frame_buffers: [MAX_SHADOW_VIEWS]wgpu.Buffer, // one per cascade / spot shadow
+    draw_buffer:         wgpu.Buffer,
+    draw_capacity:       int,
+    light_buffer:        wgpu.Buffer,
+    overlay_buffer:      wgpu.Buffer,
+    blit_buffer:         wgpu.Buffer,
+
+    // Default resources
+    white_texture:       Texture,
+    black_texture:       Texture,
+    flat_normal_texture: Texture,
+    dummy_depth:         Render_Target,
+
+    // Render targets
+    hdr:        [2]Render_Target,
+    ldr:        [2]Render_Target,
+    depth:      Render_Target,
+    normal:     Render_Target,
+    ao_raw:     Render_Target,
+    ao:         Render_Target,
+    shadow_map: Render_Target,
+    spot_shadow_map: Render_Target,
+    cascade_count:   int,
+
+    // Bind groups
+    frame_bg_main:   wgpu.BindGroup,
+    shadow_frame_bgs: [MAX_SHADOW_VIEWS]wgpu.BindGroup,
+    fs_bg_ssao:      wgpu.BindGroup,
+    fs_bg_blur:      wgpu.BindGroup,
+    fs_bg_ao:        wgpu.BindGroup,
+    fs_bg_hdr_plain: [2]wgpu.BindGroup, // HDR source without the bloom texture bound
+    bloom:           [MAX_BLOOM_LEVELS]Render_Target,
+    bloom_levels:    int,
+    fs_bg_bloom:     [MAX_BLOOM_LEVELS]wgpu.BindGroup,
+    fs_bg_hdr:       [2]wgpu.BindGroup,
+    fs_bg_ldr:       [2]wgpu.BindGroup,
+    blit_bg:         [2]wgpu.BindGroup,
+    overlay_bg:      wgpu.BindGroup,
+
+    // Bumped whenever material bind groups must be rebuilt (sampler change).
+    material_generation: u32,
+
+    // Scene state
+    camera:      Camera_State,
+    lighting:    Lighting_State,
+    clear_color: Vec4, // linear
+    screen_tint: Vec4,
+    time:        f64,
+    delta_time:  f64,
+    frame_index: u64,
+
+    // Per frame lists
+    instances:     [dynamic]Draw_Instance,
+    commands:      [dynamic]Draw_Command,
+    lights:        [dynamic]Light_Instance,
+    overlay:       [dynamic]Overlay_Command,
+    post_effects:  [dynamic]Post_Effect,
+
+    // Scratch
+    draw_data:     [dynamic]Draw_Data,
+    light_data:    [MAX_LIGHTS]Light_Data,
+    overlay_data:  [dynamic]Overlay_Draw_Data,
+
+    screenshot_path:   string,
+    screenshot_window: bool, // capture the window image instead of the render buffer
+    surface_copyable:  bool,
+
+    // Error scope result
+    scope_done:    bool,
+    scope_error:   string,
+}
+
+@(private)
+state_storage: Renderer_State
+
+// Package state lives behind a pointer so a hot reloaded build can adopt it.
+@(private)
+state: ^Renderer_State = &state_storage
+
+get_state_ptr :: proc() -> rawptr { return state }
+set_state_ptr :: proc(p: rawptr) { state = (^Renderer_State)(p) }
+get_state_size :: proc() -> int { return size_of(Renderer_State) }
+
+// ---------------------------------------------------------------------------
+// Init / shutdown
+// ---------------------------------------------------------------------------
+
+init :: proc(window: glfw.WindowHandle, window_width: u32, window_height: u32, config: Graphics_Config) {
+    state.ctx = context
+    state.window = window
+    state.window_width = window_width
+    state.window_height = window_height
+
+    state.instance = wgpu.CreateInstance(nil)
+    if state.instance == nil {
+        log.panic("WebGPU is not supported")
     }
-	
-    wgpu.RenderPassEncoderSetViewport(
-        instance.render_pass_encoder,
-        x, y, width, height,
-        0.0, 1.0
-    )
-}
+    state.surface = glfwglue.GetSurface(state.instance, window)
 
-@(private)
-fit_rectangle_in_rectangle :: proc(inner_width: f32, inner_height: f32, outer_width: f32, outer_height: f32) -> (f32, f32) {
-	inner_aspect := inner_width / inner_height
-	outer_aspect := outer_width / outer_height
+    // Adapter
+    {
+        on_adapter :: proc "c" (status: wgpu.RequestAdapterStatus, adapter: wgpu.Adapter, message: string, userdata1: rawptr, userdata2: rawptr) {
+            context = state.ctx
+            if status != .Success || adapter == nil {
+                log.panicf("WebGPU: failed to get an adapter [%v] %s", status, message)
+            }
+            state.adapter = adapter
+        }
+        wgpu.InstanceRequestAdapter(
+            state.instance,
+            &{compatibleSurface = state.surface, powerPreference = .HighPerformance},
+            {mode = .AllowProcessEvents, callback = on_adapter},
+        )
+        for state.adapter == nil {
+            wgpu.InstanceProcessEvents(state.instance)
+        }
+    }
 
-	if inner_aspect > outer_aspect {
-		// Fit to width
-		new_width := outer_width
-		new_height := outer_width / inner_aspect
-		return new_width, new_height
-	} else {
-		// Fit to height
-		new_height := outer_height
-		new_width := outer_height * inner_aspect
-		return new_width, new_height
-	}
-}
+    // Device
+    {
+        on_device :: proc "c" (status: wgpu.RequestDeviceStatus, device: wgpu.Device, message: string, userdata1: rawptr, userdata2: rawptr) {
+            context = state.ctx
+            if status != .Success || device == nil {
+                log.panicf("WebGPU: failed to get a device [%v] %s", status, message)
+            }
+            state.device = device
+        }
+        on_error :: proc "c" (device: ^wgpu.Device, type: wgpu.ErrorType, message: string, userdata1: rawptr, userdata2: rawptr) {
+            context = state.ctx
+            log.panicf("WebGPU error [%v]: %s", type, message)
+        }
+        on_lost :: proc "c" (device: ^wgpu.Device, reason: wgpu.DeviceLostReason, message: string, userdata1: rawptr, userdata2: rawptr) {
+            context = state.ctx
+            if reason != .Destroyed && reason != .CallbackCancelled {
+                log.errorf("WebGPU device lost [%v]: %s", reason, message)
+            }
+        }
+        wgpu.AdapterRequestDevice(
+            state.adapter,
+            &wgpu.DeviceDescriptor{
+                label = "obsidon",
+                uncapturedErrorCallbackInfo = {callback = on_error},
+                deviceLostCallbackInfo = {mode = .AllowProcessEvents, callback = on_lost},
+            },
+            {mode = .AllowProcessEvents, callback = on_device},
+        )
+        for state.device == nil {
+            wgpu.InstanceProcessEvents(state.instance)
+        }
+    }
 
-set_camera_position :: proc(position: WorldVec2) {
-	instance.camera_position = position
-}
+    state.queue = wgpu.DeviceGetQueue(state.device)
+    state.config = config
 
-set_camera_angle :: proc(angle: f64) {
-	instance.camera_angle = angle
-}
+    configure_surface()
+    create_static_resources()
+    create_internal_pipelines()
+    create_targets()
 
-set_camera_zoom :: proc(zoom: f32) {
-	instance.camera_zoom = zoom
-}
-
-get_camera_position :: proc() -> WorldVec2 {
-	return instance.camera_position
-}
-
-get_camera_angle :: proc() -> f64 {
-	return instance.camera_angle
-}
-
-get_camera_zoom :: proc() -> f32 {
-	return instance.camera_zoom
-}
-
-set_screen_color_override :: proc(color: Vec4) {
-	instance.screen_color_override = color
-	instance.use_screen_color_override = true
-}
-
-clear_screen_color_override :: proc() {
-	instance.use_screen_color_override = false
-}
-
-get_framebuffer_width :: proc() -> u32 {
-	return instance.buffer_width
-}
-
-get_framebuffer_height :: proc() -> u32 {
-	return instance.buffer_height
+    state.camera = Camera_State{
+        rotation = 1,
+        fov_y    = 60.0 * (3.14159265358979 / 180.0),
+        near     = 0.1,
+        far      = 0,
+    }
+    state.lighting = Lighting_State{
+        ambient_sky    = {0.25, 0.27, 0.32},
+        ambient_ground = {0.1, 0.09, 0.08},
+        sun_enabled    = true,
+        sun_shadows    = true,
+        sun_direction  = {-0.4, -1.0, -0.3},
+        sun_color      = {1.0, 0.95, 0.9},
+        shadow_bias    = 1.0,
+    }
+    state.clear_color = {0.05, 0.05, 0.08, 1.0}
 }
 
 cleanup :: proc() {
-	// TODO: like who cares...
+    // Release order doesn't matter much at shutdown; the device takes everything with it.
+    destroy_targets()
+    delete(state.instances)
+    delete(state.commands)
+    delete(state.lights)
+    delete(state.overlay)
+    delete(state.post_effects)
+    delete(state.draw_data)
+    delete(state.overlay_data)
+    if state.device != nil {
+        wgpu.DeviceRelease(state.device)
+    }
+    if state.surface != nil {
+        wgpu.SurfaceRelease(state.surface)
+    }
+    if state.adapter != nil {
+        wgpu.AdapterRelease(state.adapter)
+    }
+    if state.instance != nil {
+        wgpu.InstanceRelease(state.instance)
+    }
+}
+
+// Apply new graphics settings at runtime (recreates render targets as needed).
+apply_config :: proc(config: Graphics_Config) {
+    vsync_changed := config.vsync != state.config.vsync
+    filter_changed := config.texture_filter != state.config.texture_filter
+    state.config = config
+    if vsync_changed {
+        configure_surface()
+    }
+    if filter_changed {
+        wgpu.SamplerRelease(state.sampler_material)
+        state.sampler_material = create_material_sampler(config.texture_filter)
+        state.material_generation += 1
+    }
+    create_targets()
+}
+
+get_config :: proc() -> Graphics_Config {
+    return state.config
+}
+
+window_resized :: proc(width: u32, height: u32) {
+    if width == state.window_width && height == state.window_height {
+        return
+    }
+    state.window_width = width
+    state.window_height = height
+    state.surface_dirty = true
+}
+
+get_render_width :: proc() -> u32 { return state.render_width }
+get_render_height :: proc() -> u32 { return state.render_height }
+
+@(private)
+configure_surface :: proc() {
+    if state.window_width == 0 || state.window_height == 0 {
+        return
+    }
+    caps, status := wgpu.SurfaceGetCapabilities(state.surface, state.adapter)
+    if status != .Success {
+        log.panic("WebGPU: could not query surface capabilities")
+    }
+    defer wgpu.SurfaceCapabilitiesFreeMembers(caps)
+
+    format := caps.formats[0]
+    for i in 0..<caps.formatCount {
+        f := caps.formats[i]
+        if f == .BGRA8Unorm || f == .RGBA8Unorm {
+            format = f
+            break
+        }
+    }
+    state.surface_srgb = format == .BGRA8UnormSrgb || format == .RGBA8UnormSrgb
+    state.surface_copyable = .CopySrc in caps.usages
+
+    present_mode := wgpu.PresentMode.Fifo
+    if !state.config.vsync {
+        for i in 0..<caps.presentModeCount {
+            m := caps.presentModes[i]
+            if m == .Immediate {
+                present_mode = .Immediate
+                break
+            }
+            if m == .Mailbox {
+                present_mode = .Mailbox
+            }
+        }
+    }
+
+    state.surface_config = wgpu.SurfaceConfiguration{
+        device      = state.device,
+        usage       = {.RenderAttachment, .CopySrc} if state.surface_copyable else {.RenderAttachment},
+        format      = format,
+        width       = state.window_width,
+        height      = state.window_height,
+        presentMode = present_mode,
+        alphaMode   = .Opaque,
+    }
+    wgpu.SurfaceConfigure(state.surface, &state.surface_config)
+    state.surface_dirty = false
+}
+
+// ---------------------------------------------------------------------------
+// Static resources (samplers, layouts, buffers, default textures)
+// ---------------------------------------------------------------------------
+
+@(private)
+create_material_sampler :: proc(filter: Texture_Filter) -> wgpu.Sampler {
+    linear := filter == .Linear
+    return wgpu.DeviceCreateSampler(state.device, &wgpu.SamplerDescriptor{
+        addressModeU  = .Repeat,
+        addressModeV  = .Repeat,
+        addressModeW  = .Repeat,
+        magFilter     = .Linear if linear else .Nearest,
+        minFilter     = .Linear if linear else .Nearest,
+        mipmapFilter  = .Linear if linear else .Nearest,
+        lodMinClamp   = 0,
+        lodMaxClamp   = 0 if !linear else 32,
+        maxAnisotropy = 1,
+    })
+}
+
+@(private)
+create_static_resources :: proc() {
+    d := state.device
+
+    state.sampler_material = create_material_sampler(state.config.texture_filter)
+    state.sampler_linear = wgpu.DeviceCreateSampler(d, &wgpu.SamplerDescriptor{
+        addressModeU = .ClampToEdge, addressModeV = .ClampToEdge, addressModeW = .ClampToEdge,
+        magFilter = .Linear, minFilter = .Linear, mipmapFilter = .Nearest,
+        lodMaxClamp = 32, maxAnisotropy = 1,
+    })
+    state.sampler_nearest = wgpu.DeviceCreateSampler(d, &wgpu.SamplerDescriptor{
+        addressModeU = .ClampToEdge, addressModeV = .ClampToEdge, addressModeW = .ClampToEdge,
+        magFilter = .Nearest, minFilter = .Nearest, mipmapFilter = .Nearest,
+        lodMaxClamp = 32, maxAnisotropy = 1,
+    })
+    state.sampler_shadow = wgpu.DeviceCreateSampler(d, &wgpu.SamplerDescriptor{
+        addressModeU = .ClampToEdge, addressModeV = .ClampToEdge, addressModeW = .ClampToEdge,
+        magFilter = .Linear, minFilter = .Linear, mipmapFilter = .Nearest,
+        lodMaxClamp = 32, compare = .LessEqual, maxAnisotropy = 1,
+    })
+
+    state.frame_layout = make_layout({
+        entry_uniform(0),
+        entry_storage(1),
+        entry_storage(2),
+        entry_texture(3, .Depth, dimension = ._2DArray),
+        entry_sampler(4, .Comparison),
+        entry_texture(5, .Float),
+        entry_texture(6, .Depth, dimension = ._2DArray),
+    })
+    state.fullscreen_layout = make_layout({
+        entry_uniform(0),
+        entry_texture(1, .Float),
+        entry_texture(2, .Depth),
+        entry_sampler(3, .Filtering),
+        entry_sampler(4, .Filtering),
+        entry_texture(5, .Float),
+    })
+    state.blit_layout = make_layout({
+        entry_texture(0, .Float),
+        entry_sampler(1, .Filtering),
+        entry_uniform(2),
+    })
+    state.overlay_layout = make_layout({
+        entry_storage(0),
+        entry_sampler(1, .Filtering),
+    })
+    state.overlay_tex_layout = make_layout({
+        entry_texture(0, .Float),
+    })
+    state.fullscreen_pipeline_layout = make_pipeline_layout({state.fullscreen_layout})
+    state.blit_pipeline_layout = make_pipeline_layout({state.blit_layout})
+    state.overlay_pipeline_layout = make_pipeline_layout({state.overlay_layout, state.overlay_tex_layout})
+
+    state.frame_buffer_camera = make_buffer(size_of(Frame_Uniforms), {.Uniform, .CopyDst})
+    for i in 0..<MAX_SHADOW_VIEWS {
+        state.shadow_frame_buffers[i] = make_buffer(size_of(Frame_Uniforms), {.Uniform, .CopyDst})
+    }
+    state.light_buffer = make_buffer(size_of(Light_Data) * MAX_LIGHTS, {.Storage, .CopyDst})
+    state.overlay_buffer = make_buffer(size_of(Overlay_Draw_Data) * MAX_OVERLAY_DRAWS, {.Storage, .CopyDst})
+    state.blit_buffer = make_buffer(32, {.Uniform, .CopyDst})
+    state.draw_capacity = INITIAL_DRAW_CAPACITY
+    state.draw_buffer = make_buffer(u64(size_of(Draw_Data) * state.draw_capacity), {.Storage, .CopyDst})
+
+    state.white_texture = texture_create_solid({255, 255, 255, 255}, srgb = true)
+    state.black_texture = texture_create_solid({0, 0, 0, 255}, srgb = true)
+    state.flat_normal_texture = texture_create_solid({128, 128, 255, 255}, srgb = false)
+    state.dummy_depth = make_depth_array(1, 1)
+
+    state.overlay_bg = make_bind_group(state.overlay_layout, {
+        bind_buffer(0, state.overlay_buffer, size_of(Overlay_Draw_Data) * MAX_OVERLAY_DRAWS),
+        bind_sampler(1, state.sampler_nearest),
+    })
+}
+
+@(private)
+create_internal_pipelines :: proc() {
+    fullscreen_source :: proc(body: string) -> string {
+        return strings.concatenate({sh.LIBRARY_COMMON, "\n", sh.LIBRARY_POST, "\n", FULLSCREEN_WGSL, "\n", body}, context.temp_allocator)
+    }
+
+    ssao := create_module(fullscreen_source(SSAO_WGSL), "ssao")
+    blur := create_module(fullscreen_source(SSAO_BLUR_WGSL), "ssao_blur")
+    tonemap := create_module(fullscreen_source(TONEMAP_WGSL), "tonemap")
+    debug_view := create_module(fullscreen_source(DEBUG_VIEW_WGSL), "debug_view")
+    bloom := create_module(strings.concatenate({sh.LIBRARY_COMMON, "\n", sh.LIBRARY_POST, "\n", BLOOM_WGSL}, context.temp_allocator), "bloom")
+    additive := wgpu.BlendState{
+        color = {srcFactor = .One, dstFactor = .One, operation = .Add},
+        alpha = {srcFactor = .One, dstFactor = .One, operation = .Add},
+    }
+    state.pipelines.bloom_prefilter = create_fullscreen_pipeline(bloom, state.fullscreen_pipeline_layout, HDR_FORMAT, nil, "bloom_prefilter", "fs_prefilter")
+    state.pipelines.bloom_down = create_fullscreen_pipeline(bloom, state.fullscreen_pipeline_layout, HDR_FORMAT, nil, "bloom_down", "fs_downsample")
+    state.pipelines.bloom_up = create_fullscreen_pipeline(bloom, state.fullscreen_pipeline_layout, HDR_FORMAT, &additive, "bloom_up", "fs_upsample")
+    wgpu.ShaderModuleRelease(bloom)
+    blit := create_module(BLIT_WGSL, "blit")
+    overlay := create_module(OVERLAY_WGSL, "overlay")
+
+    state.pipelines.ssao = create_fullscreen_pipeline(ssao, state.fullscreen_pipeline_layout, AO_FORMAT, nil, "ssao")
+    state.pipelines.ssao_blur = create_fullscreen_pipeline(blur, state.fullscreen_pipeline_layout, AO_FORMAT, nil, "ssao_blur")
+    state.pipelines.tonemap = create_fullscreen_pipeline(tonemap, state.fullscreen_pipeline_layout, LDR_FORMAT, nil, "tonemap")
+    state.pipelines.debug_view = create_fullscreen_pipeline(debug_view, state.fullscreen_pipeline_layout, LDR_FORMAT, nil, "debug_view")
+    state.pipelines.blit = create_fullscreen_pipeline(blit, state.blit_pipeline_layout, state.surface_config.format, nil, "blit")
+
+    alpha_blend := wgpu.BlendState{
+        color = {srcFactor = .SrcAlpha, dstFactor = .OneMinusSrcAlpha, operation = .Add},
+        alpha = {srcFactor = .One, dstFactor = .OneMinusSrcAlpha, operation = .Add},
+    }
+    state.pipelines.overlay = create_fullscreen_pipeline(overlay, state.overlay_pipeline_layout, LDR_FORMAT, &alpha_blend, "overlay")
+
+    wgpu.ShaderModuleRelease(ssao)
+    wgpu.ShaderModuleRelease(blur)
+    wgpu.ShaderModuleRelease(tonemap)
+    wgpu.ShaderModuleRelease(debug_view)
+    wgpu.ShaderModuleRelease(blit)
+    wgpu.ShaderModuleRelease(overlay)
+}
+
+// ---------------------------------------------------------------------------
+// WebGPU helpers
+// ---------------------------------------------------------------------------
+
+@(private)
+entry_uniform :: proc(binding: u32, visibility := VF) -> wgpu.BindGroupLayoutEntry {
+    return {binding = binding, visibility = visibility, buffer = {type = .Uniform}}
+}
+
+@(private)
+entry_storage :: proc(binding: u32, visibility := VF) -> wgpu.BindGroupLayoutEntry {
+    return {binding = binding, visibility = visibility, buffer = {type = .ReadOnlyStorage}}
+}
+
+@(private)
+entry_texture :: proc(binding: u32, sample_type: wgpu.TextureSampleType, visibility := VF, dimension := wgpu.TextureViewDimension._2D) -> wgpu.BindGroupLayoutEntry {
+    return {binding = binding, visibility = visibility, texture = {sampleType = sample_type, viewDimension = dimension}}
+}
+
+@(private)
+entry_sampler :: proc(binding: u32, type: wgpu.SamplerBindingType, visibility := VF) -> wgpu.BindGroupLayoutEntry {
+    return {binding = binding, visibility = visibility, sampler = {type = type}}
+}
+
+@(private)
+bind_buffer :: proc(binding: u32, buffer: wgpu.Buffer, size: u64) -> wgpu.BindGroupEntry {
+    return {binding = binding, buffer = buffer, offset = 0, size = size}
+}
+
+@(private)
+bind_texture :: proc(binding: u32, view: wgpu.TextureView) -> wgpu.BindGroupEntry {
+    return {binding = binding, textureView = view}
+}
+
+@(private)
+bind_sampler :: proc(binding: u32, sampler: wgpu.Sampler) -> wgpu.BindGroupEntry {
+    return {binding = binding, sampler = sampler}
+}
+
+@(private)
+make_layout :: proc(entries: []wgpu.BindGroupLayoutEntry) -> wgpu.BindGroupLayout {
+    return wgpu.DeviceCreateBindGroupLayout(state.device, &wgpu.BindGroupLayoutDescriptor{
+        entryCount = len(entries),
+        entries    = raw_data(entries),
+    })
+}
+
+@(private)
+make_pipeline_layout :: proc(layouts: []wgpu.BindGroupLayout) -> wgpu.PipelineLayout {
+    return wgpu.DeviceCreatePipelineLayout(state.device, &wgpu.PipelineLayoutDescriptor{
+        bindGroupLayoutCount = len(layouts),
+        bindGroupLayouts     = raw_data(layouts),
+    })
+}
+
+@(private)
+make_bind_group :: proc(layout: wgpu.BindGroupLayout, entries: []wgpu.BindGroupEntry) -> wgpu.BindGroup {
+    return wgpu.DeviceCreateBindGroup(state.device, &wgpu.BindGroupDescriptor{
+        layout     = layout,
+        entryCount = len(entries),
+        entries    = raw_data(entries),
+    })
+}
+
+@(private)
+make_buffer :: proc(size: u64, usage: wgpu.BufferUsageFlags) -> wgpu.Buffer {
+    return wgpu.DeviceCreateBuffer(state.device, &wgpu.BufferDescriptor{size = size, usage = usage})
+}
+
+@(private)
+make_target :: proc(width: u32, height: u32, format: wgpu.TextureFormat, usage: wgpu.TextureUsageFlags) -> Render_Target {
+    texture := wgpu.DeviceCreateTexture(state.device, &wgpu.TextureDescriptor{
+        size          = {width = width, height = height, depthOrArrayLayers = 1},
+        format        = format,
+        usage         = usage,
+        dimension     = ._2D,
+        mipLevelCount = 1,
+        sampleCount   = 1,
+    })
+    view := wgpu.TextureCreateView(texture, nil)
+    return Render_Target{texture = texture, view = view, width = width, height = height}
+}
+
+// Depth texture array (shadow maps): one array view for sampling plus a view per layer to render into.
+@(private)
+make_depth_array :: proc(size: u32, layers: int) -> Render_Target {
+    texture := wgpu.DeviceCreateTexture(state.device, &wgpu.TextureDescriptor{
+        size          = {width = size, height = size, depthOrArrayLayers = u32(layers)},
+        format        = DEPTH_FORMAT,
+        usage         = {.RenderAttachment, .TextureBinding},
+        dimension     = ._2D,
+        mipLevelCount = 1,
+        sampleCount   = 1,
+    })
+    target := Render_Target{texture = texture, width = size, height = size, layer_count = layers}
+    target.view = wgpu.TextureCreateView(texture, &wgpu.TextureViewDescriptor{
+        format = DEPTH_FORMAT, dimension = ._2DArray, mipLevelCount = 1, arrayLayerCount = u32(layers), aspect = .All,
+    })
+    for i in 0..<layers {
+        target.layers[i] = wgpu.TextureCreateView(texture, &wgpu.TextureViewDescriptor{
+            format = DEPTH_FORMAT, dimension = ._2D, mipLevelCount = 1, baseArrayLayer = u32(i), arrayLayerCount = 1, aspect = .All,
+        })
+    }
+    return target
+}
+
+@(private)
+destroy_target :: proc(target: ^Render_Target) {
+    for i in 0..<target.layer_count {
+        wgpu.TextureViewRelease(target.layers[i])
+    }
+    if target.view != nil {
+        wgpu.TextureViewRelease(target.view)
+    }
+    if target.texture != nil {
+        wgpu.TextureDestroy(target.texture)
+        wgpu.TextureRelease(target.texture)
+    }
+    target^ = {}
+}
+
+@(private)
+release_bind_group :: proc(bg: ^wgpu.BindGroup) {
+    if bg^ != nil {
+        wgpu.BindGroupRelease(bg^)
+        bg^ = nil
+    }
+}
+
+@(private)
+push_error_scope :: proc() {
+    wgpu.DevicePushErrorScope(state.device, .Validation)
+}
+
+// Pops the error scope; returns the error message ("" when there was none).
+@(private)
+pop_error_scope :: proc() -> string {
+    on_pop :: proc "c" (status: wgpu.PopErrorScopeStatus, type: wgpu.ErrorType, message: string, userdata1: rawptr, userdata2: rawptr) {
+        context = state.ctx
+        state.scope_done = true
+        if type != .NoError && status == .Success {
+            state.scope_error = strings.clone(message, context.temp_allocator)
+        }
+    }
+    state.scope_done = false
+    state.scope_error = ""
+    wgpu.DevicePopErrorScope(state.device, {mode = .AllowProcessEvents, callback = on_pop})
+    for !state.scope_done {
+        wgpu.InstanceProcessEvents(state.instance)
+    }
+    return state.scope_error
+}
+
+@(private)
+report_shader_error :: proc(label: string, source: string, message: string) {
+    sb := strings.builder_make(context.temp_allocator)
+    fmt.sbprintf(&sb, "Shader '%s' failed to compile:\n%s\n---- generated WGSL ----\n", label, message)
+    line := 1
+    remaining := source
+    for l in strings.split_lines_iterator(&remaining) {
+        fmt.sbprintf(&sb, "%4d | %s\n", line, l)
+        line += 1
+    }
+    log.panic(strings.to_string(sb))
+}
+
+@(private)
+create_module :: proc(source: string, label: string) -> wgpu.ShaderModule {
+    push_error_scope()
+    module := wgpu.DeviceCreateShaderModule(state.device, &wgpu.ShaderModuleDescriptor{
+        label       = label,
+        nextInChain = &wgpu.ShaderSourceWGSL{sType = .ShaderSourceWGSL, code = source},
+    })
+    if err := pop_error_scope(); err != "" {
+        report_shader_error(label, source, err)
+    }
+    return module
+}
+
+@(private)
+create_fullscreen_pipeline :: proc(module: wgpu.ShaderModule, layout: wgpu.PipelineLayout, format: wgpu.TextureFormat, blend: ^wgpu.BlendState, label: string, fragment_entry := "fs_main") -> wgpu.RenderPipeline {
+    push_error_scope()
+    pipeline := wgpu.DeviceCreateRenderPipeline(state.device, &wgpu.RenderPipelineDescriptor{
+        label  = label,
+        layout = layout,
+        vertex = {module = module, entryPoint = "vs_main"},
+        fragment = &wgpu.FragmentState{
+            module      = module,
+            entryPoint  = fragment_entry,
+            targetCount = 1,
+            targets     = &wgpu.ColorTargetState{format = format, blend = blend, writeMask = wgpu.ColorWriteMaskFlags_All},
+        },
+        primitive   = {topology = .TriangleList, frontFace = .CCW, cullMode = .None},
+        multisample = {count = 1, mask = 0xFFFFFFFF},
+    })
+    if err := pop_error_scope(); err != "" {
+        log.panicf("Failed to create pipeline '%s': %s", label, err)
+    }
+    return pipeline
 }

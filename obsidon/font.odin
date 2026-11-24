@@ -113,18 +113,8 @@ render_glyph :: proc(font: ^truetype.fontinfo, char: rune, scale: f32) -> Glyph 
         rgba_data[i * 4 + 3] = gray_value // A
     }
 
-    texture := renderer.texture_load_from_raw_pixels(rgba_data, u32(width), u32(height))
-    quad_vertices := get_sprite_quad(u32(width), u32(height))
-    model := renderer.model_load(quad_vertices[:])
-    
-    sprite := Sprite{
-        u32(width),
-        u32(height),
-        renderer.TexturedModel{
-            model,
-            texture,
-        },
-    }
+    texture := renderer.texture_create(rgba_data, u32(width), u32(height), srgb = true, mipmaps = false)
+    sprite := sprite_from_texture(texture)
 
     return Glyph{
         sprite = sprite,

@@ -15,10 +15,11 @@
 
 package obsidon
 
-text_draw :: proc(font: ^Font, text: string, position: Vec2, scale: f32, color: Vec4, line_spacing: f32 = 0.2, ui: bool = false) {
+// Draw text on the overlay layer (see sprite.odin for the coordinate space).
+text_draw :: proc(font: ^Font, text: string, position: Vec2, scale: f32, color: Color, line_spacing: f32 = 0.2) {
     glyph_position := position
     line_height := f64((font.ascent - font.descent + font.line_gap) * scale * (1.0 + line_spacing))
-    fallback_glyph := font.glyphs[' ']
+    fallback_glyph := &font.glyphs[' ']
 
     for char in text {
         if char == '\n' {
@@ -27,9 +28,10 @@ text_draw :: proc(font: ^Font, text: string, position: Vec2, scale: f32, color: 
             continue
         }
         
-        glyph, ok := font.glyphs[char]
-        if !ok {
-            glyph = fallback_glyph
+        // Pointer into the map: the overlay keeps the glyph texture pointer until the frame ends.
+        glyph := fallback_glyph
+        if g, ok := &font.glyphs[char]; ok {
+            glyph = g
         }
 
         if glyph.width == 0 || glyph.height == 0 {
@@ -40,11 +42,7 @@ text_draw :: proc(font: ^Font, text: string, position: Vec2, scale: f32, color: 
                 -f64((glyph.height + glyph.offset_y) * scale),
             }
 
-            if ui {
-                sprite_draw_ui_colored(&glyph.sprite, draw_position, VEC2_ZERO, 0.0, false, scale, color)
-            } else {
-                sprite_draw_colored(&glyph.sprite, draw_position, VEC2_ZERO, 0.0, false, scale, color)
-            }
+            sprite_draw_colored(&glyph.sprite, draw_position, VEC2_ZERO, 0.0, false, scale, color)
 
             glyph_position.x += f64((glyph.advance + 1) * scale) // +1 for letter spacing
         }
