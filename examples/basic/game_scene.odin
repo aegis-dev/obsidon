@@ -3,8 +3,8 @@ package example
 import "core:fmt"
 import "core:math"
 
-import obsidon "../obsidon"
-import sh "../obsidon/shader"
+import obsidon "../../obsidon"
+import sh "../../obsidon/shader"
 
 baldman_png: []u8 = #load("assets/baldman.png")
 kekw_png: []u8 = #load("assets/kekw.png")

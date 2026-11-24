@@ -16,7 +16,6 @@
 package obsidon
 
 import "core:log"
-import "core:c"
 
 import "vendor:stb/truetype"
 

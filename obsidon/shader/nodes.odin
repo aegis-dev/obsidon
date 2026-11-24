@@ -241,6 +241,15 @@ ambient_occlusion :: proc() -> Value {
     return add_node(Node{op = .Call, type = .Float, stage = .Fragment_Only, text = "obs_ao"})
 }
 
+// Screen-space derivative width |d/dx| + |d/dy| of a value: how much it changes
+// from one pixel to the next. Use it to anti-alias procedural patterns
+// (lines, grids, stars). Fragment only.
+fwidth :: proc(a: Value) -> Value {
+    ensure_active("fwidth")
+    check_value("fwidth", a)
+    return add_node(Node{op = .Call, type = a.type, stage = .Fragment_Only, text = "fwidth"}, a)
+}
+
 // Blend a colour towards the fog colour based on distance (see obsidon.set_fog).
 fog :: proc(color: Value, world_pos: Value) -> Value {
     expect_type("fog", world_pos, .Vec3)
@@ -327,6 +336,14 @@ scene_depth :: proc(uv: Value) -> Value {
     ensure_post("scene_depth")
     expect_type("scene_depth", uv, .Vec2)
     return call("obs_scene_linear_depth", .Float, uv)
+}
+
+// World-space direction of the view ray through `uv` (unit length, the world
+// is camera-relative so the ray starts at the origin). Fog, sky, light shafts.
+view_ray :: proc(uv: Value) -> Value {
+    ensure_post("view_ray")
+    expect_type("view_ray", uv, .Vec2)
+    return call("obs_view_ray", .Vec3, uv)
 }
 
 // Size of one render target pixel in uv units.
@@ -598,7 +615,7 @@ construct :: proc(what: string, n: int, args: []Arg) -> Value {
     all_const := true
     consts: [4]f32
     count := 0
-    for arg, i in args {
+    for arg in args {
         switch v in arg {
         case f32:
             if count < 4 { consts[count] = v }

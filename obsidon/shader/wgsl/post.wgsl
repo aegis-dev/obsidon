@@ -33,3 +33,13 @@ fn obs_scene_linear_depth(uv: vec2f) -> f32 {
     let view = frame.inv_proj * ndc;
     return -view.z / view.w;
 }
+
+// World-space direction (camera-relative world, unit length) of the view ray
+// through `uv`. The view matrix is rotation only, so its transpose inverts it.
+fn obs_view_ray(uv: vec2f) -> vec3f {
+    let ndc = vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0, 1.0);
+    let v = frame.inv_proj * ndc;
+    let dir_view = normalize(v.xyz / v.w);
+    let rot = mat3x3f(frame.view[0].xyz, frame.view[1].xyz, frame.view[2].xyz);
+    return normalize(transpose(rot) * dir_view);
+}

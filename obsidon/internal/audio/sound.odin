@@ -16,7 +16,6 @@
 package audio
 
 import "core:log"
-import "core:c"
 
 import "vendor:miniaudio"
 

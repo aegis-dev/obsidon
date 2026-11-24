@@ -24,7 +24,8 @@ language, and every shader automatically works with shadows, SSAO and the rest o
   `width x height`) shown with integer scaling + black borders, fit or stretched; a built-in PS1 shader
   (vertex snapping, affine textures, Gouraud lighting, dithering)
 - **Big worlds**: 64-bit world coordinates with camera-relative rendering, infinite reverse-Z far plane
-- **2D overlay**: sprites, animations, particles and text drawn over the 3D scene (HUD, menus)
+- **2D overlay**: sprites, animations, particles, text and solid shapes (`draw_rect`, `draw_line`,
+  `draw_circle`, ...) drawn over the 3D scene (HUD, menus)
 - **Scene system, input, audio**: unchanged simple APIs
 
 ## Quick start
@@ -97,7 +98,7 @@ main :: proc() {
 }
 ```
 
-See `example/` for a fuller sample (custom shader, PS1 shader, lights, sprites and text).
+See `examples/basic/` for a fuller sample (custom shader, PS1 shader, lights, sprites and text).
 
 ## Graphics settings
 
@@ -231,7 +232,8 @@ included) instead of the render buffer. `save_screenshot(path, window_image)` do
 ## Building
 
 ```bash
-odin build example -out:bin/example.exe
+odin build examples/basic -out:bin/example.exe
+odin build examples/ps1_flight -out:bin/ps1_flight.exe
 ```
 
 Requires a recent Odin (tested with dev-2026-11). wgpu-native is linked statically from `vendor:wgpu`.

@@ -11,7 +11,8 @@ It grew out of a 2D engine: keep the same "small API, no ceremony" style when ex
     `shader.odin` (built-in shaders, `shader_rebuild`), `material.odin` (+ post effects)
   - `hotreload.odin` (engine state handoff), `args_*.odin` (`command_line_args`, works inside DLLs)
   - `lighting.odin`, `camera.odin`, `transform.odin`, `math.odin`
-  - 2D overlay: `sprite.odin`, `text.odin`, `font.odin`, `animation.odin`, `particle.odin`
+  - 2D overlay: `sprite.odin`, `text.odin`, `font.odin`, `shapes.odin` (rects, lines, circles),
+    `animation.odin`, `particle.odin`
 - `obsidon/shader/` — package `shader`, the shader graph builder → WGSL codegen. No GPU code.
   - `builder.odin` (state, outputs, params), `nodes.odin` (primitives), `library.odin` (building blocks made
     only of primitives), `codegen.odin` (per-pass WGSL)
@@ -28,7 +29,8 @@ It grew out of a 2D engine: keep the same "small API, no ceremony" style when ex
 
 ```bash
 odin check obsidon -no-entry-point     # type-check the engine
-odin build example -out:bin/example.exe -debug
+odin build examples/basic -out:bin/example.exe -debug
+odin build examples/ps1_flight -out:bin/ps1_flight.exe   # --view=1..6 --screenshot=out.png (see its game.odin)
 OBSIDON_SCREENSHOT=shot.png OBSIDON_SCREENSHOT_FRAME=40 ./bin/example.exe   # render, save PNG, quit
 # add OBSIDON_SCREENSHOT_WINDOW=1 to capture the final window image (scaling + borders)
 ```
@@ -80,6 +82,10 @@ Shader compile errors panic with the full generated WGSL (line-numbered) in the 
 ## Shader builder rules (`obsidon/shader`)
 
 - Shaders can be rebuilt in place (`shader_rebuild`); materials remap values/textures by name hash.
+- Up to `MAX_PARAMS` (32) material parameters per shader (one `vec4` each in the material uniform).
+- `fwidth` (screen-space derivative) is fragment only: use it to anti-alias procedural patterns.
+- Post shaders can reconstruct the per-pixel world view direction with `view_ray(uv)` (fog, sky effects)
+  and the distance with `scene_depth(uv)` (1e30 for the sky).
 
 - The builder is a global immediate-mode graph: `sh.begin()` … primitives … `sh.end()` → `Shader_Desc`
   with WGSL for the main, shadow and prepass variants (post shaders: one variant).

@@ -139,6 +139,11 @@ overlay_draw :: proc(texture: ^Texture, model: Mat4, color: Vec4, use_color: boo
     })
 }
 
+// 1x1 white texture, for solid colour overlay shapes.
+overlay_white_texture :: proc() -> ^Texture {
+    return &state.white_texture
+}
+
 // ---------------------------------------------------------------------------
 // Frame
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ package example
 
 import "core:log"
 
-import obsidon "../obsidon"
+import obsidon "../../obsidon"
 
 // Aliases for convenience
 Vec2      :: obsidon.Vec2

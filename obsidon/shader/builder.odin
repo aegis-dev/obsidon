@@ -41,7 +41,7 @@ package shader
 import "core:log"
 import "core:strings"
 
-MAX_PARAMS   :: 16
+MAX_PARAMS   :: 32
 MAX_TEXTURES :: 8
 
 Type :: enum u8 {
