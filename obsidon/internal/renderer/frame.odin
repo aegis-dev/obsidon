@@ -234,6 +234,21 @@ end_frame :: proc() {
         bloom_params    = {state.config.bloom_intensity, state.config.bloom_threshold, 0.5, 1 if state.bloom_levels > 0 else 0},
         counts          = {u32(len(state.lights)), 0, 0, 0},
     }
+    if state.streak_levels > 0 {
+        // Each level's weight relative to the next narrower one: above 1 the
+        // wide levels carry more light and the tail reaches further. Normalize
+        // by the peak response to a point light (level k spreads its light over
+        // 2^k texels), so the length setting doesn't change the core brightness.
+        stretch := 0.6 + state.config.lens_streak_length
+        peak, weight: f32 = 0, 1
+        for _ in 0..<state.streak_levels {
+            peak += weight
+            weight *= stretch * 0.5
+        }
+        intensity := state.config.lens_streak_intensity / max(peak, 1e-4)
+        frame.streak_params = {intensity, state.config.lens_streak_threshold, stretch, 1}
+        frame.streak_tint = state.config.lens_streak_tint
+    }
     if l.sun_enabled {
         frame.sun_color = {l.sun_color.r, l.sun_color.g, l.sun_color.b, 1}
     }
@@ -532,6 +547,19 @@ end_frame :: proc() {
         for i := state.bloom_levels - 1; i > 0; i -= 1 {
             fullscreen_pass(encoder, state.bloom[i - 1].view, state.pipelines.bloom_up, state.fs_bg_bloom[i], nil, "bloom_up", load = true)
         }
+    }
+
+    // ---- Lens streaks: bright pass, width-only downsample chain, additive
+    // upsample, then added onto the HDR image (after bloom read it).
+    if state.streak_levels > 0 {
+        fullscreen_pass(encoder, state.streak[0].view, state.pipelines.streak_prefilter, state.fs_bg_hdr_plain[hdr_index], nil, "streak_prefilter")
+        for i in 1..<state.streak_levels {
+            fullscreen_pass(encoder, state.streak[i].view, state.pipelines.streak_down, state.fs_bg_streak[i - 1], nil, "streak_down")
+        }
+        for i := state.streak_levels - 1; i > 0; i -= 1 {
+            fullscreen_pass(encoder, state.streak[i - 1].view, state.pipelines.streak_up, state.fs_bg_streak[i], nil, "streak_up", load = true)
+        }
+        fullscreen_pass(encoder, state.hdr[hdr_index].view, state.pipelines.streak_composite, state.fs_bg_streak[0], nil, "streak_composite", load = true)
     }
 
     // ---- Tonemap (or a debug view of an intermediate buffer)

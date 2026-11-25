@@ -65,6 +65,8 @@ Frame_Uniforms :: struct {
     post_params:     Vec4,
     screen_tint:     Vec4,
     bloom_params:    Vec4,
+    streak_params:   Vec4,
+    streak_tint:     Vec4,
     counts:          [4]u32,
 }
 
@@ -89,7 +91,7 @@ Overlay_Draw_Data :: struct {
 }
 
 #assert(size_of(Vertex) == 64)
-#assert(size_of(Frame_Uniforms) == 12 * 64 + 20 * 16)
+#assert(size_of(Frame_Uniforms) == 12 * 64 + 22 * 16)
 #assert(size_of(Draw_Data) == 144)
 #assert(size_of(Light_Data) == 64)
 #assert(size_of(Overlay_Draw_Data) == 112)
@@ -170,6 +172,12 @@ Graphics_Config :: struct {
     bloom:             bool,
     bloom_intensity:   f32,
     bloom_threshold:   f32,
+
+    lens_streaks:          bool,
+    lens_streak_intensity: f32,
+    lens_streak_threshold: f32,
+    lens_streak_length:    f32,
+    lens_streak_tint:      Vec4, // linear
 
     debug_view:        Debug_View,
 }

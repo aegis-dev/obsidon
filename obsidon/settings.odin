@@ -90,6 +90,14 @@ Graphics_Settings :: struct {
     bloom_intensity:   f32,  // how much bloom is added (default 0.35)
     bloom_threshold:   f32,  // brightness where bloom starts (default 1.0, linear HDR)
 
+    // Anamorphic lens streaks: thin horizontal flares across bright lights,
+    // like the ones cinema (anamorphic) lenses throw. Off by default.
+    lens_streaks:          bool,
+    lens_streak_intensity: f32,   // how much is added (default 0.6)
+    lens_streak_threshold: f32,   // brightness where streaks start (default 2.0, linear HDR)
+    lens_streak_length:    f32,   // 0..1, how far streaks reach across the screen (default 0.85)
+    lens_streak_tint:      Color, // sRGB, applied per blur level: the core keeps the light's colour, the tails shift towards it (default cold blue)
+
     // Show an intermediate buffer (AO, normals, depth) - for debugging.
     debug_view:        Debug_View,
 }
@@ -126,6 +134,11 @@ default_graphics_settings :: proc() -> Graphics_Settings {
         bloom             = true,
         bloom_intensity   = 0.35,
         bloom_threshold   = 1.0,
+        lens_streaks          = false,
+        lens_streak_intensity = 0.6,
+        lens_streak_threshold = 2.0,
+        lens_streak_length    = 0.85,
+        lens_streak_tint      = {0.8, 0.88, 1.0, 1},
     }
 }
 
@@ -200,5 +213,10 @@ to_renderer_config :: proc(s: Graphics_Settings) -> renderer.Graphics_Config {
         bloom             = s.bloom,
         bloom_intensity   = s.bloom_intensity,
         bloom_threshold   = s.bloom_threshold,
+        lens_streaks          = s.lens_streaks,
+        lens_streak_intensity = max(s.lens_streak_intensity, 0),
+        lens_streak_threshold = max(s.lens_streak_threshold, 0),
+        lens_streak_length    = clamp(s.lens_streak_length, 0, 1),
+        lens_streak_tint      = renderer.srgb_to_linear(s.lens_streak_tint),
     }
 }

@@ -417,6 +417,8 @@ max :: proc(a: Arg, c: Arg) -> Value { return componentwise("max", a, c) }
 pow :: proc(a: Arg, c: Arg) -> Value { return componentwise("pow", a, c) }
 mod :: proc(a: Arg, c: Arg) -> Value { return binary("mod", "%", a, c) }
 step :: proc(edge: Arg, x: Arg) -> Value { return componentwise("step", edge, x) }
+// Angle of the vector (x, y) in radians, -pi..pi.
+atan2 :: proc(y: Arg, x: Arg) -> Value { return componentwise("atan2", y, x) }
 
 clamp :: proc(x: Arg, lo: Arg, hi: Arg) -> Value { return componentwise("clamp", x, lo, hi) }
 smoothstep :: proc(lo: Arg, hi: Arg, x: Arg) -> Value { return componentwise("smoothstep", lo, hi, x) }

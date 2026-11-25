@@ -66,6 +66,20 @@ create_targets :: proc() {
         }
     }
 
+    // Lens streak chain: half resolution, then only the width halves (thin streaks).
+    state.streak_levels = 0
+    if state.config.lens_streaks {
+        sw, sh_ := max(w / 2, 1), max(h / 2, 1)
+        for i in 0..<MAX_STREAK_LEVELS {
+            state.streak[i] = make_target(sw, sh_, HDR_FORMAT, color_usage)
+            state.streak_levels += 1
+            if sw <= 8 {
+                break
+            }
+            sw = max(sw / 2, 1)
+        }
+    }
+
     rebuild_frame_bind_groups()
 
     // Binding 5 is the bloom texture for passes that read it (black otherwise).
@@ -86,6 +100,9 @@ create_targets :: proc() {
 
     for i in 0..<state.bloom_levels {
         state.fs_bg_bloom[i] = fullscreen_bg(state.bloom[i].view, false)
+    }
+    for i in 0..<state.streak_levels {
+        state.fs_bg_streak[i] = fullscreen_bg(state.streak[i].view, false)
     }
 
     if state.config.ssao {
@@ -163,6 +180,11 @@ destroy_targets :: proc() {
         destroy_target(&state.bloom[i])
     }
     state.bloom_levels = 0
+    for i in 0..<MAX_STREAK_LEVELS {
+        release_bind_group(&state.fs_bg_streak[i])
+        destroy_target(&state.streak[i])
+    }
+    state.streak_levels = 0
     destroy_target(&state.depth)
     destroy_target(&state.normal)
     destroy_target(&state.ao_raw)

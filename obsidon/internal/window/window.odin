@@ -25,10 +25,13 @@ KEY_COUNT :: i32(Key.KEY_LAST) + 1
 BUTTON_COUNT :: i32(Button.MOUSE_BUTTON_LAST) + 1
 
 Window_Mode :: enum {
-    // Borderless window covering the primary monitor.
+    // Exclusive fullscreen on the primary monitor (its current video mode).
     Fullscreen,
     // Regular resizable window.
     Windowed,
+    // Borderless window covering the primary monitor ("windowed fullscreen"):
+    // no mode switch, alt-tab friendly.
+    Borderless,
 }
 
 Window_State :: struct {
@@ -89,6 +92,18 @@ init :: proc(name: cstring, mode: Window_Mode, width: u32, height: u32) -> (wind
         instance.window = glfw.CreateWindow(video.width, video.height, name, monitor, nil)
         if instance.window != nil {
             mx, my := glfw.GetMonitorPos(monitor)
+            glfw.SetWindowPos(instance.window, mx, my)
+        }
+    case .Borderless:
+        monitor := glfw.GetPrimaryMonitor()
+        if monitor == nil {
+            log.panic("glfw: no primary monitor")
+        }
+        video := glfw.GetVideoMode(monitor)
+        mx, my := glfw.GetMonitorPos(monitor)
+        glfw.WindowHint(glfw.DECORATED, glfw.FALSE)
+        instance.window = glfw.CreateWindow(video.width, video.height, name, nil, nil)
+        if instance.window != nil {
             glfw.SetWindowPos(instance.window, mx, my)
         }
     case .Windowed:

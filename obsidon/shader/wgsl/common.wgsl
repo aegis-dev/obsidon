@@ -29,6 +29,8 @@ struct Frame {
     post_params:     vec4f,   // exposure, tonemapper (0 none, 1 reinhard, 2 aces), surface is sRGB
     screen_tint:     vec4f,   // rgb, a = amount (obsidon.set_screen_color_override)
     bloom_params:    vec4f,   // intensity, threshold, knee, enabled
+    streak_params:   vec4f,   // lens streaks: intensity (normalized), threshold, stretch, enabled
+    streak_tint:     vec4f,   // lens streaks: linear rgb, applied per chain level
     counts:          vec4u,   // point/spot light count
 }
 

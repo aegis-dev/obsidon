@@ -6,7 +6,8 @@ It grew out of a 2D engine: keep the same "small API, no ceremony" style when ex
 ## Layout
 
 - `obsidon/` — package `obsidon`, the public API (what games import)
-  - `context.odin` main loop (`run_game`), `settings.odin` (`Settings`, `Graphics_Settings`)
+  - `context.odin` main loop (`run_game`), `settings.odin` (`Settings`, `Graphics_Settings`; window modes
+    `.Windowed`, `.Fullscreen` (exclusive) and `.Borderless` (windowed fullscreen))
   - `mesh.odin` (primitives, OBJ, `draw_mesh`, instancing), `model.odin` (glTF via cgltf), `texture.odin`,
     `shader.odin` (built-in shaders, `shader_rebuild`), `material.odin` (+ post effects)
   - `hotreload.odin` (engine state handoff), `args_*.odin` (`command_line_args`, works inside DLLs)
@@ -19,7 +20,7 @@ It grew out of a 2D engine: keep the same "small API, no ceremony" style when ex
   - `wgsl/common.wgsl`, `surface.wgsl`, `post.wgsl` — engine shader library linked into every generated shader
 - `obsidon/internal/renderer/` — WebGPU renderer. `renderer.odin` (device, layouts, helpers), `resources.odin`
   (mesh/texture/shader/material/pipelines), `targets.odin` (render targets, bind groups), `frame.odin`
-  (submission, shadow views, all passes), `wgsl/` (SSAO, blur, bloom, tonemap, blit, overlay, debug view)
+  (submission, shadow views, all passes), `wgsl/` (SSAO, blur, bloom, lens streaks, tonemap, blit, overlay, debug view)
 - `obsidon/internal/window/` (GLFW, input), `obsidon/internal/audio/`
 - `obsidon/extensions/` — optional 2D gameplay helpers (transform, transform animations, collision)
 - `example/` — sample game
@@ -47,6 +48,9 @@ Shader compile errors panic with the full generated WGSL (line-numbered) in the 
 2. Depth/normal prepass (only when SSAO is on) → SSAO → 4x4 blur
 3. Main pass → HDR `RGBA16Float` (reverse-Z depth, `GreaterEqual`, clear 0). Opaque sorted by shader/material, transparent back to front
 4. Post effects `Before_Tonemap` (HDR ping-pong) → bloom (threshold, downsample pyramid, additive upsample)
+   → anamorphic lens streaks (`Graphics_Settings.lens_streaks`, off by default: half-res bright pass that keeps
+   only the centre row of large sources and drops very large ones, width-only downsample chain, additive upsample
+   tinted per level so tails shift to the tint, added onto the HDR image)
    → tonemap (+ bloom, or debug view) → LDR `RGBA8Unorm`
 5. Post effects `After_Tonemap` (LDR ping-pong) → 2D overlay → blit to the swapchain into the rectangle from
    `get_viewport()` (`Scaling_Mode`: `.Integer` whole-number scale + centred borders, `.Fit`, `.Stretch`).

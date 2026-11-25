@@ -53,6 +53,8 @@ TONEMAP_WGSL :: string(#load("wgsl/tonemap.wgsl"))
 @(private)
 BLOOM_WGSL :: string(#load("wgsl/bloom.wgsl"))
 MAX_BLOOM_LEVELS :: 6
+LENS_STREAK_WGSL :: string(#load("wgsl/lens_streak.wgsl"))
+MAX_STREAK_LEVELS :: 8
 @(private)
 DEBUG_VIEW_WGSL :: string(#load("wgsl/debug_view.wgsl"))
 @(private)
@@ -140,6 +142,10 @@ Fullscreen_Pipelines :: struct {
     bloom_prefilter: wgpu.RenderPipeline,
     bloom_down:      wgpu.RenderPipeline,
     bloom_up:        wgpu.RenderPipeline,
+    streak_prefilter: wgpu.RenderPipeline,
+    streak_down:      wgpu.RenderPipeline,
+    streak_up:        wgpu.RenderPipeline,
+    streak_composite: wgpu.RenderPipeline,
     blit:      wgpu.RenderPipeline,
     overlay:   wgpu.RenderPipeline,
 }
@@ -214,6 +220,9 @@ Renderer_State :: struct {
     bloom:           [MAX_BLOOM_LEVELS]Render_Target,
     bloom_levels:    int,
     fs_bg_bloom:     [MAX_BLOOM_LEVELS]wgpu.BindGroup,
+    streak:          [MAX_STREAK_LEVELS]Render_Target, // lens streak chain: width halves, height stays
+    streak_levels:   int,
+    fs_bg_streak:    [MAX_STREAK_LEVELS]wgpu.BindGroup,
     fs_bg_hdr:       [2]wgpu.BindGroup,
     fs_bg_ldr:       [2]wgpu.BindGroup,
     blit_bg:         [2]wgpu.BindGroup,
@@ -576,6 +585,12 @@ create_internal_pipelines :: proc() {
     state.pipelines.bloom_down = create_fullscreen_pipeline(bloom, state.fullscreen_pipeline_layout, HDR_FORMAT, nil, "bloom_down", "fs_downsample")
     state.pipelines.bloom_up = create_fullscreen_pipeline(bloom, state.fullscreen_pipeline_layout, HDR_FORMAT, &additive, "bloom_up", "fs_upsample")
     wgpu.ShaderModuleRelease(bloom)
+    streak := create_module(strings.concatenate({sh.LIBRARY_COMMON, "\n", sh.LIBRARY_POST, "\n", LENS_STREAK_WGSL}, context.temp_allocator), "lens_streak")
+    state.pipelines.streak_prefilter = create_fullscreen_pipeline(streak, state.fullscreen_pipeline_layout, HDR_FORMAT, nil, "streak_prefilter", "fs_prefilter")
+    state.pipelines.streak_down = create_fullscreen_pipeline(streak, state.fullscreen_pipeline_layout, HDR_FORMAT, nil, "streak_down", "fs_downsample")
+    state.pipelines.streak_up = create_fullscreen_pipeline(streak, state.fullscreen_pipeline_layout, HDR_FORMAT, &additive, "streak_up", "fs_upsample")
+    state.pipelines.streak_composite = create_fullscreen_pipeline(streak, state.fullscreen_pipeline_layout, HDR_FORMAT, &additive, "streak_composite", "fs_composite")
+    wgpu.ShaderModuleRelease(streak)
     blit := create_module(BLIT_WGSL, "blit")
     overlay := create_module(OVERLAY_WGSL, "overlay")
 
