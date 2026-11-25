@@ -156,6 +156,7 @@ Texture :: struct {
     view:       wgpu.TextureView,
     width:      u32,
     height:     u32,
+    depth:      u32, // > 1 for 3D textures
     // Lazily created bind group used by the 2D overlay.
     overlay_bg: wgpu.BindGroup,
 }
@@ -208,6 +209,69 @@ texture_create :: proc(pixels: []u8, width: u32, height: u32, srgb := true, mipm
 
     view := wgpu.TextureCreateView(texture, nil)
     return Texture{texture = texture, view = view, width = width, height = height}
+}
+
+// Create a 3D texture from tightly packed RGBA8 texels (x fastest, then y,
+// then z). Linear data (noise, lookup tables), optional box filtered mips.
+texture_create_3d :: proc(texels: []u8, width, height, depth: u32, mipmaps := true) -> Texture {
+    if len(texels) < int(width * height * depth * 4) {
+        log.panic("texture_create_3d: not enough texel data")
+    }
+    mip_count: u32 = 1
+    if mipmaps {
+        size := max(width, height, depth)
+        for size > 1 {
+            size /= 2
+            mip_count += 1
+        }
+    }
+    texture := wgpu.DeviceCreateTexture(state.device, &wgpu.TextureDescriptor{
+        size          = {width = width, height = height, depthOrArrayLayers = depth},
+        format        = .RGBA8Unorm,
+        usage         = {.TextureBinding, .CopyDst},
+        dimension     = ._3D,
+        mipLevelCount = mip_count,
+        sampleCount   = 1,
+    })
+    level := texels[:width * height * depth * 4]
+    w, h, d := width, height, depth
+    for mip in 0..<mip_count {
+        wgpu.QueueWriteTexture(
+            state.queue,
+            &wgpu.TexelCopyTextureInfo{texture = texture, mipLevel = mip, aspect = .All},
+            raw_data(level),
+            uint(len(level)),
+            &wgpu.TexelCopyBufferLayout{bytesPerRow = w * 4, rowsPerImage = h},
+            &wgpu.Extent3D{width = w, height = h, depthOrArrayLayers = d},
+        )
+        if mip + 1 < mip_count {
+            nw, nh, nd := max(w / 2, 1), max(h / 2, 1), max(d / 2, 1)
+            next := make([]u8, nw * nh * nd * 4, context.temp_allocator)
+            for z in 0..<nd {
+                for y in 0..<nh {
+                    for x in 0..<nw {
+                        for c in 0..<u32(4) {
+                            sum: u32 = 0
+                            for k in 0..<u32(8) {
+                                sx := min(x * 2 + (k & 1), w - 1)
+                                sy := min(y * 2 + ((k >> 1) & 1), h - 1)
+                                sz := min(z * 2 + ((k >> 2) & 1), d - 1)
+                                sum += u32(level[((sz * h + sy) * w + sx) * 4 + c])
+                            }
+                            next[((z * nh + y) * nw + x) * 4 + c] = u8((sum + 4) / 8)
+                        }
+                    }
+                }
+            }
+            level = next
+            w, h, d = nw, nh, nd
+        }
+    }
+    view := wgpu.TextureCreateView(texture, &wgpu.TextureViewDescriptor{
+        format = .RGBA8Unorm, dimension = ._3D, baseMipLevel = 0, mipLevelCount = mip_count,
+        baseArrayLayer = 0, arrayLayerCount = 1, aspect = .All,
+    })
+    return Texture{texture = texture, view = view, width = width, height = height, depth = depth}
 }
 
 texture_create_solid :: proc(color: [4]u8, srgb: bool) -> Texture {
@@ -337,8 +401,8 @@ shader_init :: proc(s: ^Shader, desc: sh.Shader_Desc) {
     entries := make([dynamic]wgpu.BindGroupLayoutEntry, context.temp_allocator)
     append(&entries, entry_uniform(0))
     append(&entries, entry_sampler(1, .Filtering))
-    for _, i in s.textures {
-        append(&entries, entry_texture(u32(i + 2), .Float))
+    for t, i in s.textures {
+        append(&entries, entry_texture(u32(i + 2), .Float, dimension = ._3D if t.volume else ._2D))
     }
     s.material_layout = make_layout(entries[:])
 
@@ -563,7 +627,7 @@ material_prepare :: proc(m: ^Material) {
         append(&entries, bind_buffer(0, m.uniform_buffer, size_of(Vec4) * sh.MAX_PARAMS))
         append(&entries, bind_sampler(1, state.sampler_material))
         for info, i in m.shader.textures {
-            view := m.textures[i].view if m.textures[i] != nil else default_texture_view(info.default_value)
+            view := m.textures[i].view if m.textures[i] != nil else default_texture_view(info.default_value, info.volume)
             append(&entries, bind_texture(u32(i + 2), view))
         }
         m.bind_group = make_bind_group(m.shader.material_layout, entries[:])
@@ -620,7 +684,10 @@ name_hash :: proc(name: string) -> u64 {
 }
 
 @(private)
-default_texture_view :: proc(d: sh.Default_Texture) -> wgpu.TextureView {
+default_texture_view :: proc(d: sh.Default_Texture, volume := false) -> wgpu.TextureView {
+    if volume {
+        return state.white_volume.view
+    }
     switch d {
     case .White: return state.white_texture.view
     case .Black: return state.black_texture.view
@@ -654,13 +721,17 @@ Post_Effect :: struct {
     material: ^Material,
     stage:    Post_Stage,
     enabled:  bool,
+    half_resolution: bool,
 }
 
-post_effect_add :: proc(material: ^Material, stage: Post_Stage) {
+post_effect_add :: proc(material: ^Material, stage: Post_Stage, half_resolution := false) {
     if material.shader.mode != .Post {
         log.panic("post_effect_add: the material's shader is not a post-processing shader (use shader.begin(.Post))")
     }
-    append(&state.post_effects, Post_Effect{material, stage, true})
+    if half_resolution && stage != .Before_Tonemap {
+        log.panic("post_effect_add: half resolution effects are only supported before tonemapping")
+    }
+    append(&state.post_effects, Post_Effect{material, stage, true, half_resolution})
 }
 
 post_effect_remove :: proc(material: ^Material) {

@@ -119,6 +119,7 @@ Param_Info :: struct {
 Texture_Info :: struct {
     name:          string,
     default_value: Default_Texture,
+    volume:        bool, // 3D texture (texture_3d), sampled with a vec3
 }
 
 // Result of building a shader. Pass it to `obsidon.shader_create`.
@@ -426,18 +427,50 @@ texture :: proc(name: string, default_value := Default_Texture.White) -> Texture
     if len(b.textures) >= MAX_TEXTURES {
         log.panicf("shader '%s': too many textures (max %d)", b.name, MAX_TEXTURES)
     }
-    append(&b.textures, Texture_Info{strings.clone(name), default_value})
+    append(&b.textures, Texture_Info{strings.clone(name), default_value, false})
     return Texture_Ref{i32(len(b.textures) - 1)}
 }
 
-// Sample a texture. In the vertex stage the top mip level is used.
+// Declare a 3D texture slot (volume noise, 3D lookup tables). Sample it with
+// a vec3; the material sampler repeats, so tileable volumes wrap seamlessly.
+// Unset slots use a 1x1x1 white volume.
+texture_3d :: proc(name: string) -> Texture_Ref {
+    ensure_active("texture_3d")
+    for t, i in b.textures {
+        if t.name == name {
+            return Texture_Ref{i32(i)}
+        }
+    }
+    if len(b.textures) >= MAX_TEXTURES {
+        log.panicf("shader '%s': too many textures (max %d)", b.name, MAX_TEXTURES)
+    }
+    append(&b.textures, Texture_Info{strings.clone(name), .White, true})
+    return Texture_Ref{i32(len(b.textures) - 1)}
+}
+
+// Sample a texture (uv: vec2, or vec3 for a texture_3d). In the vertex stage
+// the top mip level is used.
 sample :: proc(tex: Texture_Ref, uv: Value) -> Value {
     ensure_active("sample")
-    expect_type("sample", uv, .Vec2)
     if tex.index < 0 || int(tex.index) >= len(b.textures) {
         log.panic("shader.sample: invalid texture reference")
     }
+    expect_type("sample", uv, .Vec3 if b.textures[tex.index].volume else .Vec2)
     return add_node(Node{op = .Sample, type = .Vec4, index = tex.index}, uv)
+}
+
+// Sample a texture at an explicit mip level (0 = full detail). Use it where
+// screen derivatives don't describe the footprint, e.g. raymarching: implicit
+// mip selection would blur far samples to the average.
+sample_level :: proc(tex: Texture_Ref, uv: Value, level: Arg) -> Value {
+    ensure_active("sample_level")
+    if tex.index < 0 || int(tex.index) >= len(b.textures) {
+        log.panic("shader.sample_level: invalid texture reference")
+    }
+    expect_type("sample_level", uv, .Vec3 if b.textures[tex.index].volume else .Vec2)
+    lod := to_value(level)
+    expect_type("sample_level level", lod, .Float)
+    return add_node(Node{op = .Sample, type = .Vec4, index = tex.index}, uv, lod)
 }
 
 @(private)

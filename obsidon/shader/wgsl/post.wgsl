@@ -8,6 +8,9 @@
 @group(0) @binding(4) var scene_sampler_nearest: sampler; // nearest, clamped
 @group(0) @binding(5) var bloom_texture: texture_2d<f32>;  // bloom result (black when bloom is off)
 
+// 0..1 screen position of the fragment (top-left origin), set by fs_main.
+var<private> obs_post_uv: vec2f;
+
 // Bloom light at `uv` (already blurred, HDR).
 fn obs_bloom(uv: vec2f) -> vec3f {
     return textureSampleLevel(bloom_texture, scene_sampler, uv, 0.0).rgb;

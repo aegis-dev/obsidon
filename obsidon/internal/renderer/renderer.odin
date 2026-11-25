@@ -54,6 +54,7 @@ TONEMAP_WGSL :: string(#load("wgsl/tonemap.wgsl"))
 BLOOM_WGSL :: string(#load("wgsl/bloom.wgsl"))
 MAX_BLOOM_LEVELS :: 6
 LENS_STREAK_WGSL :: string(#load("wgsl/lens_streak.wgsl"))
+POST_COMPOSITE_WGSL :: string(#load("wgsl/post_composite.wgsl"))
 MAX_STREAK_LEVELS :: 8
 @(private)
 DEBUG_VIEW_WGSL :: string(#load("wgsl/debug_view.wgsl"))
@@ -146,6 +147,7 @@ Fullscreen_Pipelines :: struct {
     streak_down:      wgpu.RenderPipeline,
     streak_up:        wgpu.RenderPipeline,
     streak_composite: wgpu.RenderPipeline,
+    post_composite:   wgpu.RenderPipeline,
     blit:      wgpu.RenderPipeline,
     overlay:   wgpu.RenderPipeline,
 }
@@ -195,6 +197,7 @@ Renderer_State :: struct {
 
     // Default resources
     white_texture:       Texture,
+    white_volume:        Texture, // 1x1x1 default for unset texture_3d slots
     black_texture:       Texture,
     flat_normal_texture: Texture,
     dummy_depth:         Render_Target,
@@ -223,6 +226,8 @@ Renderer_State :: struct {
     streak:          [MAX_STREAK_LEVELS]Render_Target, // lens streak chain: width halves, height stays
     streak_levels:   int,
     fs_bg_streak:    [MAX_STREAK_LEVELS]wgpu.BindGroup,
+    post_half:       Render_Target, // half resolution post effects render here, then composite
+    fs_bg_post_half: wgpu.BindGroup,
     fs_bg_hdr:       [2]wgpu.BindGroup,
     fs_bg_ldr:       [2]wgpu.BindGroup,
     blit_bg:         [2]wgpu.BindGroup,
@@ -394,6 +399,19 @@ cleanup :: proc() {
 apply_config :: proc(config: Graphics_Config) {
     vsync_changed := config.vsync != state.config.vsync
     filter_changed := config.texture_filter != state.config.texture_filter
+    // Render targets only depend on these; per-frame values (intensities,
+    // tints, exposure...) are read from the config every frame.
+    Target_Key :: struct {
+        w, h: u32,
+        upscale: Texture_Filter,
+        shadows, spot_shadows, ssao, bloom, streaks: bool,
+        shadow_res, spot_res: u32,
+        cascades: int,
+    }
+    target_key :: proc(c: Graphics_Config) -> Target_Key {
+        return {c.render_width, c.render_height, c.upscale_filter, c.shadows, c.spot_shadows, c.ssao, c.bloom, c.lens_streaks, c.shadow_resolution, c.spot_shadow_resolution, c.shadow_cascades}
+    }
+    targets_changed := target_key(config) != target_key(state.config)
     state.config = config
     if vsync_changed {
         configure_surface()
@@ -403,7 +421,9 @@ apply_config :: proc(config: Graphics_Config) {
         state.sampler_material = create_material_sampler(config.texture_filter)
         state.material_generation += 1
     }
-    create_targets()
+    if targets_changed {
+        create_targets()
+    }
 }
 
 get_config :: proc() -> Graphics_Config {
@@ -556,6 +576,8 @@ create_static_resources :: proc() {
     state.draw_buffer = make_buffer(u64(size_of(Draw_Data) * state.draw_capacity), {.Storage, .CopyDst})
 
     state.white_texture = texture_create_solid({255, 255, 255, 255}, srgb = true)
+    white := [4]u8{255, 255, 255, 255}
+    state.white_volume = texture_create_3d(white[:], 1, 1, 1, false)
     state.black_texture = texture_create_solid({0, 0, 0, 255}, srgb = true)
     state.flat_normal_texture = texture_create_solid({128, 128, 255, 255}, srgb = false)
     state.dummy_depth = make_depth_array(1, 1)
@@ -591,6 +613,14 @@ create_internal_pipelines :: proc() {
     state.pipelines.streak_up = create_fullscreen_pipeline(streak, state.fullscreen_pipeline_layout, HDR_FORMAT, &additive, "streak_up", "fs_upsample")
     state.pipelines.streak_composite = create_fullscreen_pipeline(streak, state.fullscreen_pipeline_layout, HDR_FORMAT, &additive, "streak_composite", "fs_composite")
     wgpu.ShaderModuleRelease(streak)
+    // Half resolution post effects: out = scene * effect.a + effect.rgb
+    over := wgpu.BlendState{
+        color = {srcFactor = .One, dstFactor = .SrcAlpha, operation = .Add},
+        alpha = {srcFactor = .Zero, dstFactor = .One, operation = .Add},
+    }
+    composite := create_module(fullscreen_source(POST_COMPOSITE_WGSL), "post_composite")
+    state.pipelines.post_composite = create_fullscreen_pipeline(composite, state.fullscreen_pipeline_layout, HDR_FORMAT, &over, "post_composite")
+    wgpu.ShaderModuleRelease(composite)
     blit := create_module(BLIT_WGSL, "blit")
     overlay := create_module(OVERLAY_WGSL, "overlay")
 

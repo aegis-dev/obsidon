@@ -106,8 +106,12 @@ Post_Stage :: renderer.Post_Stage
 // Run a post-processing material (shader built with shader.begin(.Post))
 // over the whole screen every frame. Effects run in the order they were added.
 // The material must stay alive while the effect is active.
-post_effect_add :: proc(material: ^Material, stage := Post_Stage.After_Tonemap) {
-    renderer.post_effect_add(material, stage)
+//
+// half_resolution (Before_Tonemap only): the effect renders at half size and
+// is composited as scene * color.a + color.rgb, so it must output the light it
+// adds in rgb and the scene's transmittance in alpha (volumetrics, clouds).
+post_effect_add :: proc(material: ^Material, stage := Post_Stage.After_Tonemap, half_resolution := false) {
+    renderer.post_effect_add(material, stage, half_resolution)
 }
 
 post_effect_remove :: proc(material: ^Material) {

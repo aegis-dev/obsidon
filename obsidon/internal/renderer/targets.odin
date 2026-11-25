@@ -80,6 +80,8 @@ create_targets :: proc() {
         }
     }
 
+    state.post_half = make_target(max(w / 2, 1), max(h / 2, 1), HDR_FORMAT, color_usage)
+
     rebuild_frame_bind_groups()
 
     // Binding 5 is the bloom texture for passes that read it (black otherwise).
@@ -104,6 +106,7 @@ create_targets :: proc() {
     for i in 0..<state.streak_levels {
         state.fs_bg_streak[i] = fullscreen_bg(state.streak[i].view, false)
     }
+    state.fs_bg_post_half = fullscreen_bg(state.post_half.view, false)
 
     if state.config.ssao {
         state.fs_bg_ssao = fullscreen_bg(state.normal.view)
@@ -185,6 +188,8 @@ destroy_targets :: proc() {
         destroy_target(&state.streak[i])
     }
     state.streak_levels = 0
+    release_bind_group(&state.fs_bg_post_half)
+    destroy_target(&state.post_half)
     destroy_target(&state.depth)
     destroy_target(&state.normal)
     destroy_target(&state.ao_raw)

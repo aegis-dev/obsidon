@@ -91,5 +91,67 @@ texture_destroy :: proc(texture: ^Texture) {
     renderer.texture_destroy(texture)
 }
 
+// 3D texture from tightly packed RGBA8 texels (x fastest, then y, then z).
+// Linear data; declare the slot with shader.texture_3d and sample with a vec3.
+texture_create_3d :: proc(texels: []u8, width, height, depth: u32, mipmaps := true) -> Texture {
+    return renderer.texture_create_3d(texels, width, height, depth, mipmaps)
+}
+
+// Tileable fractal value noise volume (size^3), four independent channels.
+// Each channel is 5 octaves of smooth value noise in 0..1 (mean 0.5) with the
+// coarsest lattice 4 cells across the volume, so sampling at p * 0.25 behaves
+// like shader.fbm(p, 5) - one texture read instead of ~40 hash evaluations.
+// Use for clouds, fog, nebulae, rock detail; decorrelate by using different
+// channels, scales and offsets. Deterministic for a given size and seed.
+texture_noise_3d :: proc(size: u32 = 64, seed: u32 = 1) -> Texture {
+    n := int(max(size, 8))
+    texels := make([]u8, n * n * n * 4)
+    defer delete(texels)
+
+    hash :: #force_inline proc "contextless" (x, y, z, salt: u32) -> f32 {
+        h := x * 0x8da6b343 ~ y * 0xd8163841 ~ z * 0xcb1ab31f ~ salt * 0x165667b1
+        h = (h ~ (h >> 15)) * 0x2c1b3c6d
+        h = (h ~ (h >> 12)) * 0x297a2d39
+        h ~= h >> 15
+        return f32(h) * (1.0 / 4294967295.0)
+    }
+    fade :: #force_inline proc "contextless" (t: f32) -> f32 {
+        return t * t * (3 - 2 * t)
+    }
+
+    for z in 0 ..< n {
+        for y in 0 ..< n {
+            for x in 0 ..< n {
+                for c in 0 ..< 4 {
+                    sum, total: f32
+                    amplitude: f32 = 0.5
+                    octave: u32 = 0
+                    for period := 4; period <= n; period *= 2 {
+                        // Lattice coordinates; corners wrap at `period` (tileable).
+                        scale := f32(period) / f32(n)
+                        fx, fy, fz := f32(x) * scale, f32(y) * scale, f32(z) * scale
+                        ix, iy, iz := int(fx), int(fy), int(fz)
+                        tx, ty, tz := fade(fx - f32(ix)), fade(fy - f32(iy)), fade(fz - f32(iz))
+                        x0, y0, z0 := u32(ix % period), u32(iy % period), u32(iz % period)
+                        x1, y1, z1 := u32((ix + 1) % period), u32((iy + 1) % period), u32((iz + 1) % period)
+                        salt := seed * 977 + u32(c) * 131 + octave * 17
+                        a := math.lerp(hash(x0, y0, z0, salt), hash(x1, y0, z0, salt), tx)
+                        b := math.lerp(hash(x0, y1, z0, salt), hash(x1, y1, z0, salt), tx)
+                        cc := math.lerp(hash(x0, y0, z1, salt), hash(x1, y0, z1, salt), tx)
+                        d := math.lerp(hash(x0, y1, z1, salt), hash(x1, y1, z1, salt), tx)
+                        v := math.lerp(math.lerp(a, b, ty), math.lerp(cc, d, ty), tz)
+                        sum += v * amplitude
+                        total += amplitude
+                        amplitude *= 0.5
+                        octave += 1
+                    }
+                    texels[((z * n + y) * n + x) * 4 + c] = u8(clamp(sum / total, 0, 1) * 255 + 0.5)
+                }
+            }
+        }
+    }
+    return renderer.texture_create_3d(texels, u32(n), u32(n), u32(n))
+}
+
 @(private)
 _ :: image.Image

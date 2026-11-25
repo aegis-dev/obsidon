@@ -534,6 +534,13 @@ end_frame :: proc() {
         if !e.enabled || e.stage != .Before_Tonemap {
             continue
         }
+        if e.half_resolution {
+            // Rendered at half resolution (rgb = added light, a = how much of
+            // the scene shows through), then blended onto the HDR image.
+            fullscreen_pass(encoder, state.post_half.view, get_pipeline(e.material.shader, .Post_HDR), state.fs_bg_hdr_plain[hdr_index], e.material.bind_group, "post_hdr_half")
+            fullscreen_pass(encoder, state.hdr[hdr_index].view, state.pipelines.post_composite, state.fs_bg_post_half, nil, "post_composite", load = true)
+            continue
+        }
         fullscreen_pass(encoder, state.hdr[1 - hdr_index].view, get_pipeline(e.material.shader, .Post_HDR), state.fs_bg_hdr[hdr_index], e.material.bind_group, "post_hdr")
         hdr_index = 1 - hdr_index
     }

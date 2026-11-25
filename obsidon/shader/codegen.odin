@@ -110,7 +110,7 @@ generate :: proc(variant: Variant) -> string {
     strings.write_string(&g.out, "@group(1) @binding(0) var<uniform> material: Material_Params;\n")
     strings.write_string(&g.out, "@group(1) @binding(1) var material_sampler: sampler;\n")
     for t, i in b.textures {
-        fmt.sbprintf(&g.out, "@group(1) @binding(%d) var tex_%d: texture_2d<f32>; // %s\n", i + 2, i, t.name)
+        fmt.sbprintf(&g.out, "@group(1) @binding(%d) var tex_%d: %s; // %s\n", i + 2, i, "texture_3d<f32>" if t.volume else "texture_2d<f32>", t.name)
     }
     strings.write_string(&g.out, "\n")
 
@@ -131,6 +131,12 @@ generate :: proc(variant: Variant) -> string {
             }
         }
         fmt.sbprintf(&g.out, "    @location(%d) %sv%d: %s,\n", location, interp, i, wgsl_type(node.type))
+        location += 1
+    }
+    if b.mode == .Post {
+        // Screen uv from the fullscreen triangle: right at any target size
+        // (half resolution post effects).
+        fmt.sbprintf(&g.out, "    @location(%d) post_uv: vec2f,\n", location)
         location += 1
     }
     strings.write_string(&g.out, "}\n\n")
@@ -175,6 +181,7 @@ fn vs_main(@builtin(vertex_index) index: u32) -> Vs_Out {
     let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
     var out: Vs_Out;
     out.clip = vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.post_uv = vec2f(uv.x, 1.0 - uv.y);
     return out;
 }
 
@@ -190,6 +197,9 @@ fn vs_main(@builtin(vertex_index) index: u32) -> Vs_Out {
             strings.write_string(&g.out, "@fragment\nfn fs_main(fin: Vs_Out) {\n")
         }
         strings.write_string(&g.out, "    obs_frag_coord = fin.clip;\n")
+        if b.mode == .Post {
+            strings.write_string(&g.out, "    obs_post_uv = fin.post_uv;\n")
+        }
         for i in 1..<n {
             if g.frag_need[i] {
                 emit_node(&g, i32(i), .Fragment)
@@ -321,6 +331,9 @@ expression :: proc(g: ^Gen, node: Node, stage: Emit) -> string {
         }
         return fmt.tprintf("material.values[%d]%s", node.index, swz)
     case .Sample:
+        if node.nargs > 1 {
+            return fmt.tprintf("textureSampleLevel(tex_%d, material_sampler, %s, %s)", node.index, arg(g, node, 0, stage), arg(g, node, 1, stage))
+        }
         if stage == .Fragment {
             return fmt.tprintf("textureSample(tex_%d, material_sampler, %s)", node.index, arg(g, node, 0, stage))
         }

@@ -160,7 +160,13 @@ fog_color :: proc() -> Value { return input("fog_color", "frame.fog_color.rgb", 
 // Pixel coordinate of the fragment (fragment only).
 frag_coord :: proc() -> Value { return input("frag_coord", "obs_frag_coord.xy", .Vec2, .Fragment_Only) }
 // 0..1 screen coordinate of the fragment, (0,0) is the top-left (fragment only).
-screen_uv :: proc() -> Value { return input("screen_uv", "(obs_frag_coord.xy * frame.resolution.zw)", .Vec2, .Fragment_Only) }
+screen_uv :: proc() -> Value {
+    if b.mode == .Post {
+        // From the fullscreen triangle, so it is right for half resolution effects too.
+        return input("screen_uv", "obs_post_uv", .Vec2, .Fragment_Only)
+    }
+    return input("screen_uv", "(obs_frag_coord.xy * frame.resolution.zw)", .Vec2, .Fragment_Only)
+}
 
 // ---------------------------------------------------------------------------
 // Interpolation control

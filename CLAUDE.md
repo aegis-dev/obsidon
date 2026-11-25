@@ -8,7 +8,8 @@ It grew out of a 2D engine: keep the same "small API, no ceremony" style when ex
 - `obsidon/` — package `obsidon`, the public API (what games import)
   - `context.odin` main loop (`run_game`), `settings.odin` (`Settings`, `Graphics_Settings`; window modes
     `.Windowed`, `.Fullscreen` (exclusive) and `.Borderless` (windowed fullscreen))
-  - `mesh.odin` (primitives, OBJ, `draw_mesh`, instancing), `model.odin` (glTF via cgltf), `texture.odin`,
+  - `mesh.odin` (primitives, OBJ, `draw_mesh`, instancing), `model.odin` (glTF via cgltf), `texture.odin`
+    (2D, 3D volumes `texture_create_3d`, tileable fbm noise volume `texture_noise_3d`),
     `shader.odin` (built-in shaders, `shader_rebuild`), `material.odin` (+ post effects)
   - `hotreload.odin` (engine state handoff), `args_*.odin` (`command_line_args`, works inside DLLs)
   - `lighting.odin`, `camera.odin`, `transform.odin`, `math.odin`
@@ -51,7 +52,9 @@ Shader compile errors panic with the full generated WGSL (line-numbered) in the 
    → anamorphic lens streaks (`Graphics_Settings.lens_streaks`, off by default: half-res bright pass that keeps
    only the centre row of large sources and drops very large ones, width-only downsample chain, additive upsample
    tinted per level so tails shift to the tint, added onto the HDR image)
-   → tonemap (+ bloom, or debug view) → LDR `RGBA8Unorm`
+   → tonemap (+ bloom, or debug view) → LDR `RGBA8Unorm`.
+   Half resolution post effects (`post_effect_add(..., half_resolution = true)`, HDR only) render into a
+   half size target and are composited as `scene * color.a + color.rgb` (volumetrics)
 5. Post effects `After_Tonemap` (LDR ping-pong) → 2D overlay → blit to the swapchain into the rectangle from
    `get_viewport()` (`Scaling_Mode`: `.Integer` whole-number scale + centred borders, `.Fit`, `.Stretch`).
    The window package gets the same rectangle (`sync_window_layout`) to map the cursor.
@@ -68,7 +71,7 @@ Shader compile errors panic with the full generated WGSL (line-numbered) in the 
 - **Immediate mode**: draws, point/spot lights and overlay sprites are resubmitted every frame and the renderer
   keeps raw pointers to meshes/materials/textures until `end_frame` — never pass pointers to temporaries.
 - Pipelines are created lazily per (shader, pass kind), so graphics settings can change at runtime
-  (`apply_config` recreates targets and bind groups).
+  (`apply_config` recreates targets and bind groups, only when a setting they depend on changed).
 - Bind groups: surface shaders use group 0 = frame layout (frame, draws, lights, sun shadow array,
   comparison sampler, AO, spot shadow array), group 1 = material (params uniform, sampler, textures from
   binding 2). Post / internal fullscreen passes share the fullscreen layout (frame, colour, depth, linear +
@@ -88,6 +91,10 @@ Shader compile errors panic with the full generated WGSL (line-numbered) in the 
 - Shaders can be rebuilt in place (`shader_rebuild`); materials remap values/textures by name hash.
 - Up to `MAX_PARAMS` (32) material parameters per shader (one `vec4` each in the material uniform).
 - `fwidth` (screen-space derivative) is fragment only: use it to anti-alias procedural patterns.
+- Textures: `texture` (2D, sampled with vec2) and `texture_3d` (volume, sampled with vec3; unset = white).
+  `sample_level` picks an explicit mip - use it in raymarches, where implicit mips blur far samples.
+  Post shaders get `screen_uv` from the fullscreen triangle (correct at any target size).
+  Procedural `fbm` is expensive per pixel; prefer sampling a baked `texture_noise_3d` volume.
 - Post shaders can reconstruct the per-pixel world view direction with `view_ray(uv)` (fog, sky effects)
   and the distance with `scene_depth(uv)` (1e30 for the sky).
 
