@@ -62,6 +62,8 @@ DEBUG_VIEW_WGSL :: string(#load("wgsl/debug_view.wgsl"))
 BLIT_WGSL :: string(#load("wgsl/blit.wgsl"))
 @(private)
 OVERLAY_WGSL :: string(#load("wgsl/overlay.wgsl"))
+FSR_EASU_WGSL :: string(#load("wgsl/fsr_easu.wgsl"))
+BLIT_PARAMS_SIZE :: 48 // tint, flags, fsr (vec4 each)
 
 MAX_CASCADES      :: 4
 MAX_SPOT_SHADOWS  :: 4
@@ -150,6 +152,7 @@ Fullscreen_Pipelines :: struct {
     post_composite:   wgpu.RenderPipeline,
     blit:      wgpu.RenderPipeline,
     overlay:   wgpu.RenderPipeline,
+    easu:      wgpu.RenderPipeline,
 }
 
 Renderer_State :: struct {
@@ -181,9 +184,11 @@ Renderer_State :: struct {
     blit_layout:       wgpu.BindGroupLayout,
     overlay_layout:    wgpu.BindGroupLayout,
     overlay_tex_layout: wgpu.BindGroupLayout,
+    easu_layout:       wgpu.BindGroupLayout,
     fullscreen_pipeline_layout: wgpu.PipelineLayout,
     blit_pipeline_layout:       wgpu.PipelineLayout,
     overlay_pipeline_layout:    wgpu.PipelineLayout,
+    easu_pipeline_layout:       wgpu.PipelineLayout,
     pipelines:         Fullscreen_Pipelines,
 
     // Buffers
@@ -194,6 +199,7 @@ Renderer_State :: struct {
     light_buffer:        wgpu.Buffer,
     overlay_buffer:      wgpu.Buffer,
     blit_buffer:         wgpu.Buffer,
+    easu_buffer:         wgpu.Buffer, // FSR 1 EASU: input / output size
 
     // Default resources
     white_texture:       Texture,
@@ -205,6 +211,16 @@ Renderer_State :: struct {
     // Render targets
     hdr:        [2]Render_Target,
     ldr:        [2]Render_Target,
+    // Window resolution targets (the viewport rectangle's size), only when it
+    // differs from the render buffer (output_size = 0 otherwise):
+    // - native overlay: the 2D overlay, composited over the image in the blit
+    // - FSR 1: the EASU upscaled image, sharpened (RCAS) in the blit
+    output_size:    [2]u32,
+    overlay_target: Render_Target,
+    overlay_active: bool,
+    fsr_target:     Render_Target,
+    fsr_active:     bool,
+    easu_bg:        [2]wgpu.BindGroup, // source: ldr[i]
     depth:      Render_Target,
     normal:     Render_Target,
     ao_raw:     Render_Target,
@@ -403,13 +419,14 @@ apply_config :: proc(config: Graphics_Config) {
     // tints, exposure...) are read from the config every frame.
     Target_Key :: struct {
         w, h: u32,
-        upscale: Texture_Filter,
+        upscale: Upscale_Filter,
         shadows, spot_shadows, ssao, bloom, streaks: bool,
         shadow_res, spot_res: u32,
         cascades: int,
+        native_overlay: bool,
     }
     target_key :: proc(c: Graphics_Config) -> Target_Key {
-        return {c.render_width, c.render_height, c.upscale_filter, c.shadows, c.spot_shadows, c.ssao, c.bloom, c.lens_streaks, c.shadow_resolution, c.spot_shadow_resolution, c.shadow_cascades}
+        return {c.render_width, c.render_height, c.upscale_filter, c.shadows, c.spot_shadows, c.ssao, c.bloom, c.lens_streaks, c.shadow_resolution, c.spot_shadow_resolution, c.shadow_cascades, c.native_overlay}
     }
     targets_changed := target_key(config) != target_key(state.config)
     state.config = config
@@ -553,6 +570,11 @@ create_static_resources :: proc() {
         entry_texture(0, .Float),
         entry_sampler(1, .Filtering),
         entry_uniform(2),
+        entry_texture(3, .Float), // native overlay (black when unused)
+    })
+    state.easu_layout = make_layout({
+        entry_texture(0, .Float),
+        entry_uniform(1),
     })
     state.overlay_layout = make_layout({
         entry_storage(0),
@@ -564,6 +586,7 @@ create_static_resources :: proc() {
     state.fullscreen_pipeline_layout = make_pipeline_layout({state.fullscreen_layout})
     state.blit_pipeline_layout = make_pipeline_layout({state.blit_layout})
     state.overlay_pipeline_layout = make_pipeline_layout({state.overlay_layout, state.overlay_tex_layout})
+    state.easu_pipeline_layout = make_pipeline_layout({state.easu_layout})
 
     state.frame_buffer_camera = make_buffer(size_of(Frame_Uniforms), {.Uniform, .CopyDst})
     for i in 0..<MAX_SHADOW_VIEWS {
@@ -571,7 +594,8 @@ create_static_resources :: proc() {
     }
     state.light_buffer = make_buffer(size_of(Light_Data) * MAX_LIGHTS, {.Storage, .CopyDst})
     state.overlay_buffer = make_buffer(size_of(Overlay_Draw_Data) * MAX_OVERLAY_DRAWS, {.Storage, .CopyDst})
-    state.blit_buffer = make_buffer(32, {.Uniform, .CopyDst})
+    state.blit_buffer = make_buffer(BLIT_PARAMS_SIZE, {.Uniform, .CopyDst})
+    state.easu_buffer = make_buffer(16, {.Uniform, .CopyDst})
     state.draw_capacity = INITIAL_DRAW_CAPACITY
     state.draw_buffer = make_buffer(u64(size_of(Draw_Data) * state.draw_capacity), {.Storage, .CopyDst})
 
@@ -635,6 +659,9 @@ create_internal_pipelines :: proc() {
         alpha = {srcFactor = .One, dstFactor = .OneMinusSrcAlpha, operation = .Add},
     }
     state.pipelines.overlay = create_fullscreen_pipeline(overlay, state.overlay_pipeline_layout, LDR_FORMAT, &alpha_blend, "overlay")
+    easu := create_module(FSR_EASU_WGSL, "fsr_easu")
+    state.pipelines.easu = create_fullscreen_pipeline(easu, state.easu_pipeline_layout, LDR_FORMAT, nil, "fsr_easu")
+    wgpu.ShaderModuleRelease(easu)
 
     wgpu.ShaderModuleRelease(ssao)
     wgpu.ShaderModuleRelease(blur)

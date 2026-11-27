@@ -165,6 +165,8 @@ end_frame :: proc() {
             create_targets()
         }
     }
+    // The window rectangle can change without the buffer (resize, scaling mode).
+    update_output_targets()
 
     surface_texture := wgpu.SurfaceGetCurrentTexture(state.surface)
     switch surface_texture.status {
@@ -403,7 +405,13 @@ end_frame :: proc() {
     }
 
     // ---- Blit params
-    blit_params := [2]Vec4{state.screen_tint, {1 if state.surface_srgb else 0, 0, 0, 0}}
+    // RCAS sharpness: stops -> linear (0 = sharpest).
+    blit_params := [3]Vec4{
+        state.screen_tint,
+        {1 if state.surface_srgb else 0, 1 if state.overlay_active else 0, state.config.film_grain, f32(state.frame_index % 9973)},
+        {1 if state.fsr_active else 0, math.pow(2, -state.config.fsr_sharpness), 0, 0},
+    }
+    #assert(size_of(blit_params) == BLIT_PARAMS_SIZE)
     wgpu.QueueWriteBuffer(state.queue, state.blit_buffer, 0, &blit_params, size_of(blit_params))
 
     // ---- Materials
@@ -593,16 +601,20 @@ end_frame :: proc() {
         ldr_index = 1 - ldr_index
     }
 
-    // ---- 2D overlay
-    if len(state.overlay) > 0 {
+    // ---- 2D overlay: into the LDR buffer, or (native overlay) into its own
+    // window resolution target, cleared transparent and composited in the blit.
+    // The projection is the same either way: the target covers the viewport.
+    native_overlay := state.overlay_active
+    if len(state.overlay) > 0 || native_overlay {
         pass := wgpu.CommandEncoderBeginRenderPass(encoder, &wgpu.RenderPassDescriptor{
             label = "overlay",
             colorAttachmentCount = 1,
             colorAttachments = &wgpu.RenderPassColorAttachment{
-                view = state.ldr[ldr_index].view,
-                loadOp = .Load,
+                view = state.overlay_target.view if native_overlay else state.ldr[ldr_index].view,
+                loadOp = .Clear if native_overlay else .Load,
                 storeOp = .Store,
                 depthSlice = wgpu.DEPTH_SLICE_UNDEFINED,
+                clearValue = {0, 0, 0, 0},
             },
         })
         wgpu.RenderPassEncoderSetPipeline(pass, state.pipelines.overlay)
@@ -620,6 +632,12 @@ end_frame :: proc() {
         }
         wgpu.RenderPassEncoderEnd(pass)
         wgpu.RenderPassEncoderRelease(pass)
+    }
+
+    // ---- FSR 1 EASU: upscale the LDR image (with the overlay unless it is native)
+    // to the window rectangle's size; the blit sharpens it (RCAS).
+    if state.fsr_active {
+        fullscreen_pass(encoder, state.fsr_target.view, state.pipelines.easu, state.easu_bg[ldr_index], nil, "fsr_easu")
     }
 
     // ---- Blit to the window
@@ -651,7 +669,9 @@ end_frame :: proc() {
     shot: Screenshot_Source
     if state.screenshot_path != "" {
         shot = {state.ldr[ldr_index].texture, state.render_width, state.render_height, false, 0}
-        if state.screenshot_window {
+        // With a native overlay or FSR the render buffer isn't the final image
+        // (no UI / not upscaled): save the window image.
+        if state.screenshot_window || state.overlay_active || state.fsr_active {
             if state.surface_copyable {
                 format := state.surface_config.format
                 shot = {surface_texture.texture, state.window_width, state.window_height, format == .BGRA8Unorm || format == .BGRA8UnormSrgb, 0}
@@ -1027,6 +1047,14 @@ get_viewport :: proc() -> Vec4 {
     case .Fit:
         scale := min(ww / bw, wh / bh)
         w, h = math.round(bw * scale), math.round(bh * scale)
+        // A buffer of (nearly) the window's aspect fills it: rounding a scaled
+        // size must not leave a 1 px border.
+        if ww - w <= 1 {
+            w = ww
+        }
+        if wh - h <= 1 {
+            h = wh
+        }
     }
     // Whole-pixel offsets keep the image neatly centred and crisp.
     return {math.floor((ww - w) * 0.5), math.floor((wh - h) * 0.5), w, h}

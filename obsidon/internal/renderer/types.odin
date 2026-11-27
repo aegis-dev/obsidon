@@ -144,13 +144,24 @@ Texture_Filter :: enum {
     Linear,  // smooth + mipmaps
 }
 
+// How the render buffer is scaled to the window.
+Upscale_Filter :: enum {
+    Nearest, // crisp pixels (retro)
+    Linear,  // bilinear
+    FSR1,    // AMD FidelityFX Super Resolution 1: edge adaptive upsampling (EASU) + sharpening (RCAS).
+             // Only when the buffer is enlarged; otherwise it falls back to Linear
+}
+
 Graphics_Config :: struct {
     render_width:      u32, // 0 = native window size
     render_height:     u32,
     vsync:             bool,
     texture_filter:    Texture_Filter,
     scaling:           Scaling_Mode,
-    upscale_filter:    Texture_Filter,
+    upscale_filter:    Upscale_Filter,
+    fsr_sharpness:     f32,  // RCAS: 0 = sharpest, each +1 halves the sharpening
+    film_grain:        f32,  // grain amount, added in the blit (window resolution)
+    native_overlay:    bool, // overlay rasterized at window resolution (see Graphics_Settings)
 
     shadows:           bool,
     shadow_resolution: u32,

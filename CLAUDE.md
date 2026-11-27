@@ -58,6 +58,16 @@ Shader compile errors panic with the full generated WGSL (line-numbered) in the 
 5. Post effects `After_Tonemap` (LDR ping-pong) → 2D overlay → blit to the swapchain into the rectangle from
    `get_viewport()` (`Scaling_Mode`: `.Integer` whole-number scale + centred borders, `.Fit`, `.Stretch`).
    The window package gets the same rectangle (`sync_window_layout`) to map the cursor.
+   `upscale_filter = .FSR1`: AMD FSR 1 - EASU pass (`fsr_easu.wgsl`) from the LDR buffer to a target of the
+   viewport's size, RCAS sharpening (+ noise detection) in the blit; only when the buffer is enlarged on both
+   axes, else bilinear. `film_grain` is added in the blit at window resolution (under the overlay). Viewport
+   targets live in `update_output_targets` (targets.odin), checked every frame (resize, scaling mode).
+   `.Fit` fills the window when the buffer's aspect is within a pixel of it.
+   `Graphics_Settings.native_overlay`: when the viewport rectangle differs from the render buffer size, the
+   overlay renders into its own target of the viewport's size (cleared transparent, premultiplied, gamma
+   space) and the blit composites it over the upscaled image - sharp UI over a scaled 3D render. Overlay
+   coordinates stay render-buffer pixels (`world_to_screen`, mouse); `get_overlay_scale()` gives window pixels
+   per overlay pixel (rasterize fonts at that size). Screenshots then save the window image (the buffer has no UI)
 
 ## Invariants — read before changing things
 

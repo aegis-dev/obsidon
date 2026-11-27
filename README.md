@@ -23,6 +23,9 @@ language, and every shader automatically works with shadows, SSAO and the rest o
 - **Any render resolution**: render at the window size or at a fixed size (presets or any custom
   `width x height`) shown with integer scaling + black borders, fit or stretched; a built-in PS1 shader
   (vertex snapping, affine textures, Gouraud lighting, dithering)
+- **Upscaling**: AMD FidelityFX Super Resolution 1 (FSR 1: edge adaptive upsampling + sharpening) for a
+  scaled down render, a UI drawn at native window resolution over it (`native_overlay`), film grain after
+  upscaling
 - **Big worlds**: 64-bit world coordinates with camera-relative rendering, infinite reverse-Z far plane
 - **2D overlay**: sprites, animations, particles, text and solid shapes (`draw_rect`, `draw_line`,
   `draw_circle`, ...) drawn over the 3D scene (HUD, menus)
@@ -110,7 +113,10 @@ either at start-up through `Settings.graphics` or at runtime with `set_graphics_
 | `resolution` | `.Native`, `.R320x240`, `.R427x240`, `.R640x360`, `.R640x480`, `.R854x480`, `.R1280x720`, `.R1920x1080`, `.Custom` |
 | `custom_resolution` | `{width, height}` for `.Custom`, e.g. `{320, 240}` |
 | `scaling` | `.Integer` (whole-number scale, centred, black borders), `.Fit`, `.Stretch` |
-| `upscale_filter` | `.Nearest` (crisp pixels), `.Linear` (smooth) |
+| `upscale_filter` | `.Nearest` (crisp pixels), `.Linear` (smooth), `.FSR1` (AMD FSR 1, when the buffer is enlarged) |
+| `fsr_sharpness` | FSR 1 sharpening in stops, `0` = sharpest (default `0.25`) |
+| `native_overlay` | `bool`: draw the 2D overlay at window resolution (sharp UI over a scaled render); `get_overlay_scale()` |
+| `film_grain` | `f32` grain amount added after upscaling (`0` = off) |
 | `vsync` | `bool` |
 | `texture_filter` | `.Nearest` (retro), `.Linear` (+ mipmaps) |
 | `shadows` | `bool` |
@@ -249,3 +255,10 @@ Obsidon follows a **"less is more"** philosophy:
 ## License
 
 Apache 2.0, see [LICENSE](LICENSE).
+
+### Third-party code
+
+- **AMD FidelityFX Super Resolution 1.0** (EASU and RCAS, ported to WGSL in
+  `obsidon/internal/renderer/wgsl/fsr_easu.wgsl` and `blit.wgsl`) - Copyright (c) 2021 Advanced Micro
+  Devices, Inc., MIT license. FidelityFX and FSR are trademarks of Advanced Micro Devices, Inc.
+  See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

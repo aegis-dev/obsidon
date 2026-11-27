@@ -230,6 +230,20 @@ get_framebuffer_height :: proc() -> u32 {
     return renderer.get_render_height()
 }
 
+// Window pixels covered by one overlay pixel (x, y). 1 unless
+// Graphics_Settings.native_overlay is on and the render buffer is shown
+// scaled. Rasterize fonts at `size * scale` and draw them at `1 / scale` to
+// keep text sharp; snap positions to `1 / scale` steps.
+get_overlay_scale :: proc() -> [2]f32 {
+    return renderer.get_overlay_scale()
+}
+
+// Whether FSR 1 upscaling is running (upscale_filter = .FSR1 and the render
+// buffer is shown enlarged).
+is_fsr_active :: proc() -> bool {
+    return renderer.is_fsr_active()
+}
+
 // Background colour (sRGB).
 set_clear_color :: proc{set_clear_color_rgba, set_clear_color_color}
 

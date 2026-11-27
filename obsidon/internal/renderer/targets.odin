@@ -117,12 +117,80 @@ create_targets :: proc() {
         state.fs_bg_hdr[i] = fullscreen_bg(state.hdr[i].view)
         state.fs_bg_hdr_plain[i] = fullscreen_bg(state.hdr[i].view, false)
         state.fs_bg_ldr[i] = fullscreen_bg(state.ldr[i].view)
+    }
+    update_output_targets(force = true)
+}
+
+// Targets at the size of the window rectangle the render buffer is shown in
+// (get_viewport: follows the scaling mode, render resolution and window
+// size), used only when that rectangle differs from the buffer:
+// - native overlay (config.native_overlay): the overlay renders there instead
+//   of into the LDR buffer, so the UI is drawn at window resolution
+// - FSR 1 (upscale_filter = .FSR1, rectangle larger than the buffer on both
+//   axes): EASU upscales into it, the blit sharpens (RCAS). Shrinking or a 1:1
+//   rectangle falls back to bilinear.
+// Checked every frame; rebuilt only when something changed.
+@(private)
+update_output_targets :: proc(force := false) {
+    size: [2]u32
+    vp := get_viewport()
+    if vp.z >= 1 && vp.w >= 1 {
+        size = {u32(vp.z), u32(vp.w)}
+    }
+    if size == {state.render_width, state.render_height} {
+        size = {}
+    }
+    overlay := size != {} && state.config.native_overlay
+    fsr := size != {} && state.config.upscale_filter == .FSR1 && size.x > state.render_width && size.y > state.render_height
+    if !force && size == state.output_size && overlay == state.overlay_active && fsr == state.fsr_active {
+        return
+    }
+    destroy_target(&state.overlay_target)
+    destroy_target(&state.fsr_target)
+    for i in 0..<2 {
+        release_bind_group(&state.easu_bg[i])
+    }
+    state.output_size = size
+    state.overlay_active = overlay
+    state.fsr_active = fsr
+    usage := wgpu.TextureUsageFlags{.RenderAttachment, .TextureBinding, .CopySrc}
+    if overlay {
+        state.overlay_target = make_target(size.x, size.y, LDR_FORMAT, usage)
+    }
+    if fsr {
+        state.fsr_target = make_target(size.x, size.y, LDR_FORMAT, usage)
+        easu_params := [4]f32{f32(state.render_width), f32(state.render_height), f32(size.x), f32(size.y)}
+        wgpu.QueueWriteBuffer(state.queue, state.easu_buffer, 0, &easu_params, size_of(easu_params))
+        for i in 0..<2 {
+            state.easu_bg[i] = make_bind_group(state.easu_layout, {
+                bind_texture(0, state.ldr[i].view),
+                bind_buffer(1, state.easu_buffer, 16),
+            })
+        }
+    }
+    overlay_view := state.overlay_target.view if overlay else state.black_texture.view
+    for i in 0..<2 {
+        release_bind_group(&state.blit_bg[i])
         state.blit_bg[i] = make_bind_group(state.blit_layout, {
-            bind_texture(0, state.ldr[i].view),
-            bind_sampler(1, state.sampler_linear if state.config.upscale_filter == .Linear else state.sampler_nearest),
-            bind_buffer(2, state.blit_buffer, 32),
+            bind_texture(0, state.fsr_target.view if fsr else state.ldr[i].view),
+            bind_sampler(1, state.sampler_nearest if state.config.upscale_filter == .Nearest else state.sampler_linear),
+            bind_buffer(2, state.blit_buffer, BLIT_PARAMS_SIZE),
+            bind_texture(3, overlay_view),
         })
     }
+}
+
+// Window pixels per overlay pixel (1 unless the native overlay is in use).
+get_overlay_scale :: proc() -> [2]f32 {
+    if !state.overlay_active {
+        return {1, 1}
+    }
+    return {f32(state.output_size.x) / f32(max(state.render_width, 1)), f32(state.output_size.y) / f32(max(state.render_height, 1))}
+}
+
+// Whether FSR 1 upscaling runs this frame (see update_output_targets).
+is_fsr_active :: proc() -> bool {
+    return state.fsr_active
 }
 
 // Frame bind groups reference the draw buffer, so they are rebuilt when it grows.
@@ -190,6 +258,14 @@ destroy_targets :: proc() {
     state.streak_levels = 0
     release_bind_group(&state.fs_bg_post_half)
     destroy_target(&state.post_half)
+    destroy_target(&state.overlay_target)
+    destroy_target(&state.fsr_target)
+    for i in 0..<2 {
+        release_bind_group(&state.easu_bg[i])
+    }
+    state.output_size = {}
+    state.overlay_active = false
+    state.fsr_active = false
     destroy_target(&state.depth)
     destroy_target(&state.normal)
     destroy_target(&state.ao_raw)

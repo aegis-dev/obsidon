@@ -23,6 +23,7 @@ Shadow_Filter  :: renderer.Shadow_Filter
 Ssao_Quality   :: renderer.Ssao_Quality
 Tonemapper     :: renderer.Tonemapper
 Texture_Filter :: renderer.Texture_Filter
+Upscale_Filter :: renderer.Upscale_Filter
 Debug_View     :: renderer.Debug_View
 Scaling_Mode   :: renderer.Scaling_Mode
 
@@ -56,8 +57,25 @@ Graphics_Settings :: struct {
     // How the render buffer is shown in the window:
     // .Integer (whole-number scale, centred, black borders), .Fit, .Stretch.
     scaling:           Scaling_Mode,
-    // .Nearest = crisp pixels, .Linear = smooth (for high resolution looks).
-    upscale_filter:    Texture_Filter,
+    // .Nearest = crisp pixels, .Linear = smooth, .FSR1 = AMD FidelityFX Super
+    // Resolution 1 (edge adaptive upsampling + sharpening; for a high
+    // resolution look from a scaled down render). FSR 1 only runs when the
+    // buffer is shown enlarged (render resolution below the window); otherwise
+    // it behaves like .Linear.
+    upscale_filter:    Upscale_Filter,
+    // FSR 1 sharpening (RCAS): 0 = sharpest, each +1 halves it. Default 0.25.
+    fsr_sharpness:     f32,
+    // Film grain (0 = off, ~0.02 subtle), added after upscaling at window
+    // resolution, under the overlay. Grain in a post effect would be scaled
+    // up (and sharpened by FSR) with the render buffer.
+    film_grain:        f32,
+    // Draw the 2D overlay (UI, text) at the window's resolution instead of the
+    // render buffer's: with a scaled down 3D image the UI stays sharp. Overlay
+    // coordinates don't change (render buffer pixels, see world_to_screen); they
+    // are rasterized into the window rectangle the buffer is shown in (respects
+    // `scaling`). get_overlay_scale() tells how many window pixels one overlay
+    // pixel covers, e.g. to rasterize fonts at that size.
+    native_overlay:    bool,
 
     // Sun shadows
     shadows:           bool,
@@ -117,6 +135,7 @@ default_graphics_settings :: proc() -> Graphics_Settings {
         texture_filter    = .Linear,
         scaling           = .Integer,
         upscale_filter    = .Nearest,
+        fsr_sharpness     = 0.25,
         shadows           = true,
         shadow_resolution = .R2048,
         shadow_distance   = 60,
@@ -195,6 +214,8 @@ to_renderer_config :: proc(s: Graphics_Settings) -> renderer.Graphics_Config {
         texture_filter    = s.texture_filter,
         scaling           = s.scaling,
         upscale_filter    = s.upscale_filter,
+        fsr_sharpness     = clamp(s.fsr_sharpness, 0, 4),
+        film_grain        = max(s.film_grain, 0),
         shadows           = s.shadows,
         shadow_resolution = shadow_res,
         shadow_distance   = s.shadow_distance if s.shadow_distance > 0 else 60,
@@ -210,6 +231,7 @@ to_renderer_config :: proc(s: Graphics_Settings) -> renderer.Graphics_Config {
         tonemapper        = s.tonemapper,
         exposure          = s.exposure if s.exposure > 0 else 1.0,
         debug_view        = s.debug_view,
+        native_overlay    = s.native_overlay,
         bloom             = s.bloom,
         bloom_intensity   = s.bloom_intensity,
         bloom_threshold   = s.bloom_threshold,
